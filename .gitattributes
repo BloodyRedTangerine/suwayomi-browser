@@ -1,0 +1,9 @@
+# Sources are LF text; the build and the byte-for-byte reproducibility checks must not depend on a contributor's autocrlf.
+* text=auto eol=lf
+*.patch text eol=lf
+*.sh text eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf
+*.png binary
+*.jar binary
+*.wasm binary

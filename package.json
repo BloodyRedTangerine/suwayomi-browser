@@ -1,0 +1,19 @@
+{
+  "name": "suwayomi-browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "pretest": "node scripts/prepare-test-runtime.mjs",
+    "test": "node --test test/*.test.mjs",
+    "prepare:runtime": "node scripts/prepare-openjdk.mjs && node scripts/prepare-jvm.mjs",
+    "build:webui": "node scripts/build-webui.mjs",
+    "build:vm": "node scripts/build-vm.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3",
+    "quickjs-emscripten": "^0.32.0"
+  }
+}

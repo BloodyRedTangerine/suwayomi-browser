@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Suwayomi Browser">
+  <rect width="512" height="512" rx="128" fill="#e85d75"/>
+  <path d="M144 112h224c35 0 64 29 64 64v224H176c-18 0-32-14-32-32V112Z" fill="#fff3f5"/>
+  <path d="M208 208h144M208 272h144M208 336h96" fill="none" stroke="#e85d75" stroke-linecap="round" stroke-width="32"/>
+</svg>

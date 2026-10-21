@@ -1,0 +1,50 @@
+# Dependencies, caches and build output (the build keeps its work area in .cache or BROWSER_BUILD_CACHE)
+node_modules
+.cache
+.build
+dist
+out
+release
+jvm/.gradle
+jvm/.kotlin
+jvm/build
+runtime
+vendor
+ui
+ui-*
+# Release packages and profiles
+*.zip
+*.xpi
+*.crx
+*-unpacked
+browser-profile*
+# Raw logs and captures (the synthetic AMO screenshots are the only images tracked)
+*.log
+*.txt
+!THIRD_PARTY_LICENSES/**
+!**/*LICENSE*.txt
+!**/NOTICE*.txt
+*.har
+*.pcap
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+!AMO/screenshots/*.png
+# Keys and credentials: never
+*.pem
+*.key
+*.p8
+*.p12
+*.pfx
+*.jks
+*.keystore
+PRIVATE-extension-key
+.env
+.env.*
+# Editors / OS
+.DS_Store
+*.swp
+.idea
+.vscode

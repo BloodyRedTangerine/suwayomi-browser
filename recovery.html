@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Suwayomi local chapter recovery</title>
+<style>
+body { font: 16px system-ui, sans-serif; max-width: 850px; margin: 3rem auto; padding: 0 1rem; color-scheme: light dark; }
+li { margin: 1.5rem 0; } button { margin-left: 1rem; padding: .4rem .8rem; }
+</style>
+<h1>Local chapter recovery</h1>
+<p>Chapters removed by a source refresh are kept here, together with their saved reading state and cached files. Restoring adds them back to your library; the next source refresh can archive them again.</p>
+<p>No source code or network access is needed. This utility does not delete archived entries or cached files.</p>
+<p id="notice"></p><p id="status" role="status">Loading local archive…</p>
+<ul id="chapters"></ul>
+<p><a href="./ui/index.html">Open official Suwayomi WebUI</a></p>
+<script type="module" src="./src/webui/recovery.mjs"></script>
+</html>

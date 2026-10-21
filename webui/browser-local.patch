@@ -1,0 +1,1077 @@
+diff --git a/index.html b/index.html
+index b5cbf45..7851510 100644
+--- a/index.html
++++ b/index.html
+@@ -25,44 +25,7 @@
+         <noscript>You need to enable JavaScript to run this app.</noscript>
+         <div id="root"></div>
+         <script type="module" src="./src/index.tsx"></script>
+-        <script>
+-            const backgroundColor = (() => {
+-                let storageValue;
+-                try {
+-                    const subpath = (() => {
+-                        const baseTag = document.querySelector('base');
+-                        if (!baseTag) {
+-                            return '';
+-                        }
+-
+-                        return baseTag.href.replace(window.location.origin, '').slice(0, -1);
+-                    })();
+-                    storageValue = window.localStorage.getItem(`suwayomi_webui_${subpath}_theme_background`);
+-                } catch (error) {
+-                    return null;
+-                }
+-
+-                try {
+-                    return JSON.parse(storageValue);
+-                } catch (e) {
+-                    return storageValue;
+-                }
+-            })();
+-
+-            if (backgroundColor) {
+-                document.documentElement.style.backgroundColor = backgroundColor;
+-                // android chromium-based browser/pwa background color (e.g. top status bar and navigation bar) will change dynamically based on meta theme-color
+-                let themeColorMeta = document.querySelector('meta[name="theme-color"]');
+-                if (!themeColorMeta) {
+-                    themeColorMeta = document.createElement('meta');
+-                    themeColorMeta.setAttribute('name', 'theme-color');
+-                    document.head.appendChild(themeColorMeta);
+-                }
+-                if (themeColorMeta.getAttribute('content') !== backgroundColor) {
+-                    themeColorMeta.setAttribute('content', backgroundColor);
+-                }
+-            }
+-        </script>
++        <script type="module" src="./src/browserBackground.ts"></script>
+         <!--
+   This HTML file is a template.
+   If you open it directly in the browser, you will see an empty page.
+diff --git a/src/App.tsx b/src/App.tsx
+index e92a4d0..1d21756 100644
+--- a/src/App.tsx
++++ b/src/App.tsx
+@@ -18,6 +18,7 @@ import { AppContext } from '@/base/contexts/AppContext.tsx';
+ import { DefaultNavBar } from '@/features/navigation-bar/components/DefaultNavBar.tsx';
+ import { WebUIUpdateChecker } from '@/features/app-updates/components/WebUIUpdateChecker.tsx';
+ import { ServerUpdateChecker } from '@/features/app-updates/components/ServerUpdateChecker.tsx';
++import { BrowserLocalStatus } from '@/base/components/BrowserLocalStatus.tsx';
+ import { lazyLoadFallback } from '@/base/utils/LazyLoad.tsx';
+ import { ErrorBoundary } from '@/base/components/feedback/ErrorBoundary.tsx';
+ import { useNavBarContext } from '@/features/navigation-bar/NavbarContext.tsx';
+@@ -333,8 +334,9 @@ export const App: React.FC = () => (
+         <CssBaseline enableColorScheme />
+ 
+         <InitializeGuard>
+-            <ServerUpdateChecker />
+-            <WebUIUpdateChecker />
++            <BrowserLocalStatus />
++            {import.meta.env.VITE_BROWSER_LOCAL !== 'true' && <ServerUpdateChecker />}
++            {import.meta.env.VITE_BROWSER_LOCAL !== 'true' && <WebUIUpdateChecker />}
+ 
+             <Box sx={{ display: 'flex' }}>
+                 <OffsetContainerRoot>
+diff --git a/src/base/AppInitializer.ts b/src/base/AppInitializer.ts
+index ab5e2b9..5779e77 100644
+--- a/src/base/AppInitializer.ts
++++ b/src/base/AppInitializer.ts
+@@ -101,8 +101,8 @@ export class AppInitializer {
+              */
+             ['downloadSubscription', () => this.subscriptions.push(requestManager.downloadSubscription().subscribe())],
+             ['updaterSubscription', () => this.subscriptions.push(requestManager.updaterSubscription().subscribe())],
+-            ['webUISubscription', () => this.subscriptions.push(requestManager.webUIUpdateSubscription().subscribe())],
+-            ['syncSubscription', () => this.subscriptions.push(requestManager.syncSubscription().subscribe())],
++            ['webUISubscription', () => import.meta.env.VITE_BROWSER_LOCAL !== 'true' && this.subscriptions.push(requestManager.webUIUpdateSubscription().subscribe())],
++            ['syncSubscription', () => import.meta.env.VITE_BROWSER_LOCAL !== 'true' && this.subscriptions.push(requestManager.syncSubscription().subscribe())],
+         ]);
+     }
+ 
+diff --git a/src/base/components/BrowserLocalStatus.tsx b/src/base/components/BrowserLocalStatus.tsx
+new file mode 100644
+index 0000000..08528ec
+--- /dev/null
++++ b/src/base/components/BrowserLocalStatus.tsx
+@@ -0,0 +1,119 @@
++/* Copyright (C) Contributors to the Suwayomi project. MPL-2.0. */
++import Alert from '@mui/material/Alert';
++import Button from '@mui/material/Button';
++import IconButton from '@mui/material/IconButton';
++import CloseIcon from '@mui/icons-material/Close';
++import Stack from '@mui/material/Stack';
++import { useEffect, useState } from 'react';
++import { getBrowserBackend } from '@browser-local/webui/backend.mjs';
++import { missingPermissionOrigins, requestPermissionOrigins, sourcePermissionOrigins } from '@browser-local/extensions/permissions.mjs';
++import { BrowserPermissionRequests } from './BrowserPermissionPrompt';
++import { useNavBarContext } from '@/features/navigation-bar/NavbarContext.tsx';
++
++const LAUNCHER_HINT_KEY = 'suwayomi-browser:launcher-hint:dismissed:v1';
++
++function shouldShowLauncherHint() {
++    try {
++        return globalThis.localStorage.getItem(LAUNCHER_HINT_KEY) !== 'yes';
++    } catch {
++        return true;
++    }
++}
++
++export function BrowserLocalStatus() {
++    const browser = (globalThis as any).browser ?? (globalThis as any).chrome;
++    const { bottomBarHeight } = useNavBarContext();
++    const [missing, setMissing] = useState<string[] | null>(null);
++    const [error, setError] = useState('');
++    const [storageWarning, setStorageWarning] = useState('');
++    const [storageDismissed, setStorageDismissed] = useState(false);
++    const [showLauncherHint, setShowLauncherHint] = useState(shouldShowLauncherHint);
++
++    useEffect(() => {
++        let active = true;
++        if (import.meta.env.VITE_BROWSER_LOCAL !== 'true' || !browser?.runtime?.id) return () => { active = false; };
++        (async () => {
++            try {
++                const sources = await getBrowserBackend().manager.sources();
++                const origins = sourcePermissionOrigins(sources);
++                const next = await missingPermissionOrigins(browser, origins);
++                if (active) setMissing(next);
++            } catch (cause: any) {
++                if (active) setError(cause.message);
++            }
++        })();
++        return () => { active = false; };
++    }, [browser?.runtime?.id]);
++
++    useEffect(() => {
++        if (import.meta.env.VITE_BROWSER_LOCAL !== 'true' || !browser?.runtime?.id) return;
++        try { void Promise.resolve(browser.runtime.sendMessage({ type: 'suwayomi:register-app-tab' })).catch(() => {}); }
++        catch { /* a stale extension context does not prevent local reading */ }
++    }, [browser?.runtime?.id]);
++
++    useEffect(() => {
++        let active = true;
++        if (import.meta.env.VITE_BROWSER_LOCAL !== 'true' || !browser?.runtime?.id) return () => { active = false; };
++        (async () => {
++            const storage = globalThis.navigator?.storage;
++            if (!storage?.estimate) return;
++            try {
++                const estimate = await storage.estimate();
++                if (!active) return;
++                const { usage, quota } = estimate;
++                if (usage != null && quota != null && quota > 0 && usage / quota >= 0.9) {
++                    setStorageWarning(`Browser storage is nearly full (${Math.round((usage / quota) * 100)}% used). Review storage in Settings → About.`);
++                    setStorageDismissed(false);
++                } else {
++                    setStorageWarning('');
++                }
++            } catch (cause: any) {
++                if (active) {
++                    setStorageWarning(`Browser storage could not be checked: ${cause?.message || 'storage estimate failed'}. Review storage in Settings → About.`);
++                    setStorageDismissed(false);
++                }
++            }
++        })();
++        return () => { active = false; };
++    }, [browser?.runtime?.id]);
++
++    if (import.meta.env.VITE_BROWSER_LOCAL !== 'true' || !browser?.runtime?.id) return null;
++
++    const hosts = (missing || []).map(origin => origin.replace(/^https?:\/\//, '').replace(/\/\*$/, '')).join(', ');
++    const noticeBottom = `calc(max(136px, ${Math.ceil(bottomBarHeight)}px) + env(safe-area-inset-bottom) + 8px)`;
++    const noticeSx = {
++        position: 'fixed',
++        left: { xs: 'max(8px, env(safe-area-inset-left))', sm: 'auto' },
++        right: { xs: 'max(8px, env(safe-area-inset-right))', sm: 16 },
++        bottom: { xs: noticeBottom, sm: `calc(max(96px, ${Math.ceil(bottomBarHeight)}px) + 8px)` },
++        width: { xs: 'auto', sm: 'min(460px, calc(100vw - 32px))' },
++        maxWidth: { xs: 'none', sm: 460 },
++        maxHeight: { xs: 'min(40vh, calc(100dvh - 240px - env(safe-area-inset-top)))', sm: 'min(40vh, calc(100dvh - 160px))' },
++        overflowY: 'auto',
++        zIndex: 1600,
++        touchAction: 'pan-y',
++    } as const;
++
++    return <Stack spacing={1} data-testid="browser-action-notices" sx={noticeSx}>
++        <BrowserPermissionRequests />
++        {!!missing?.length && <Alert severity="info" action={<Button color="inherit" onClick={async () => {
++            try {
++                await requestPermissionOrigins(browser, missing);
++                const sources = await getBrowserBackend().manager.sources();
++                setMissing(await missingPermissionOrigins(browser, sourcePermissionOrigins(sources)));
++            } catch (cause: any) { setError(cause.message); }
++        }}>Allow source hosts</Button>}>
++            Browser-local preview. Source code and data stay in this browser. Allow access only for installed source hosts: {hosts}.
++            {error && ` ${error}`}
++        </Alert>}
++        {storageWarning && !storageDismissed && <Alert severity="warning" role="alert" action={<IconButton aria-label="Dismiss storage warning" color="inherit" size="small" onClick={() => setStorageDismissed(true)}><CloseIcon fontSize="small" /></IconButton>}>
++            {storageWarning}
++        </Alert>}
++        {showLauncherHint && <Alert severity="info" action={<Button color="inherit" size="small" onClick={() => {
++            try { globalThis.localStorage.setItem(LAUNCHER_HINT_KEY, 'yes'); } catch { /* dismissal is still local to this view */ }
++            setShowLauncherHint(false);
++        }}>Dismiss</Button>}>
++            On Firefox for Android, reopen Suwayomi Browser from Extensions → Suwayomi Browser → Settings, or while any web page is open use menu ⋮ → Extensions → Suwayomi Browser. Bookmark this page for one-tap access until the add-on is reinstalled.
++        </Alert>}
++    </Stack>;
++}
+diff --git a/src/base/components/BrowserPermissionPrompt.tsx b/src/base/components/BrowserPermissionPrompt.tsx
+new file mode 100644
+index 0000000..256eaf6
+--- /dev/null
++++ b/src/base/components/BrowserPermissionPrompt.tsx
+@@ -0,0 +1,49 @@
++/* Copyright (C) Contributors to the Suwayomi project. MPL-2.0. */
++import Alert from '@mui/material/Alert';
++import Button from '@mui/material/Button';
++import Stack from '@mui/material/Stack';
++import { useEffect, useState } from 'react';
++import { getPermissionRecovery } from '@browser-local/extensions/permission-recovery.mjs';
++import { requestPermissionOrigins } from '@browser-local/extensions/permissions.mjs';
++
++export function useBrowserPermissionRequests() {
++    const recovery = getPermissionRecovery();
++    const [requests, setRequests] = useState<any[]>(() => recovery.snapshot());
++    useEffect(() => {
++        const update = () => setRequests(recovery.snapshot());
++        const unsubscribe = recovery.subscribe(update);
++        update();
++        return unsubscribe;
++    }, [recovery]);
++    return requests;
++}
++
++export function BrowserPermissionPrompt({ request, repository = false }: { request: any; repository?: boolean }) {
++    const recovery = getPermissionRecovery();
++    const origins = request.origins || [request.origin];
++    const patterns = origins.join(', ');
++    return <Alert severity={request.granted ? 'success' : 'info'}
++        action={request.granted
++            ? <Button color="inherit" onClick={() => recovery.dismiss(request.origin)}>Dismiss</Button>
++            : <Button color="inherit" disabled={request.ready === false} onClick={async () => {
++                try {
++                    const allowed = await requestPermissionOrigins((globalThis as any).chrome, origins);
++                    await recovery.granted(origins, allowed);
++                } catch (error) { recovery.error(request.origin, error); }
++            }}>Allow {patterns}</Button>}>
++        {request.granted
++            ? `Access allowed for ${patterns}. Permission-failed reader images and download rows resume automatically. Retry other source actions manually.`
++            : repository
++                ? `This repository redirects to ${patterns} — Allow access to continue the same add.`
++                : `Browser access is required for ${patterns}. ${request.ready === false ? 'Collecting related hosts… ' : ''}Allow access to continue permission-failed reader images, downloads and pending operations; retry other source actions manually.`}
++        {request.error && ` ${request.error}`}
++    </Alert>;
++}
++
++export function BrowserPermissionRequests() {
++    const requests = useBrowserPermissionRequests().filter(request => !request.operations.some((key: string) => key.startsWith('repository:')));
++    if (!requests.length) return null;
++    return <Stack spacing={1} sx={{ width: '100%' }} data-testid="browser-permission-requests">
++        {requests.map(request => <BrowserPermissionPrompt key={request.origin} request={request} />)}
++    </Stack>;
++}
+diff --git a/src/base/contexts/AppContext.tsx b/src/base/contexts/AppContext.tsx
+index 344ed5b..5cd12ee 100644
+--- a/src/base/contexts/AppContext.tsx
++++ b/src/base/contexts/AppContext.tsx
+@@ -8,7 +8,7 @@
+ 
+ import { StyledEngineProvider } from '@mui/material/styles';
+ import React from 'react';
+-import { BrowserRouter as Router } from 'react-router-dom';
++import { BrowserRouter, HashRouter } from 'react-router-dom';
+ import { QueryParamProvider } from 'use-query-params';
+ import { ReactRouter6Adapter } from 'use-query-params/adapters/react-router-6';
+ import { SnackbarProvider } from 'notistack';
+@@ -26,8 +26,10 @@ interface Props {
+     children: React.ReactNode;
+ }
+ 
++const Router = import.meta.env.VITE_BROWSER_LOCAL === 'true' ? HashRouter : BrowserRouter;
++
+ export const AppContext: React.FC<Props> = ({ children }) => (
+-    <Router basename={SubpathUtil.getRouterBasename()}>
++    <Router basename={import.meta.env.VITE_BROWSER_LOCAL === 'true' ? undefined : SubpathUtil.getRouterBasename()}>
+         <StyledEngineProvider injectFirst>
+             <I18nProvider i18n={i18n}>
+                 <AppThemeContextProvider>
+diff --git a/src/browserBackground.ts b/src/browserBackground.ts
+new file mode 100644
+index 0000000..ad1daed
+--- /dev/null
++++ b/src/browserBackground.ts
+@@ -0,0 +1,9 @@
++/* Copyright (C) Contributors to the Suwayomi project. MPL-2.0. */
++// External module instead of an inline script: compatible with MV3's CSP.
++try {
++    const subpath = new URL(document.querySelector('base')?.href || '/', location.href).pathname.replace(/\/$/, '');
++    const stored = localStorage.getItem(`suwayomi_webui_${subpath}_theme_background`);
++    let color;
++    try { color = JSON.parse(stored || 'null'); } catch { color = stored; }
++    if (color) document.documentElement.style.backgroundColor = color;
++} catch { /* storage may be disabled */ }
+diff --git a/src/features/backup/screens/Backup.tsx b/src/features/backup/screens/Backup.tsx
+index d5ec99f..89d1ff3 100644
+--- a/src/features/backup/screens/Backup.tsx
++++ b/src/features/backup/screens/Backup.tsx
+@@ -37,9 +37,11 @@ import {
+     getAutoBackupFlagsInfo,
+     getBackupCleanupDisplayValue,
+ } from '@/features/backup/Backup.utils.ts';
+-import type { BackupSettingsType } from '@/features/backup/Backup.types.ts';
++import type { BackupFlag, BackupSettingsType } from '@/features/backup/Backup.types.ts';
+ 
+ let backupRestoreId: string | undefined;
++const browserLocal = import.meta.env.VITE_BROWSER_LOCAL === 'true';
++const browserBackupHiddenFlags: BackupFlag[] = browserLocal ? ['includeServerSettings'] : [];
+ 
+ const resetBackupState = () => {
+     const input = document.getElementById('backup-file') as HTMLInputElement;
+@@ -118,6 +120,7 @@ export function Backup() {
+     const createBackup = async () => {
+         const flags = await AwaitableComponent.show(BackupFlagInclusionDialog, {
+             title: t`Create backup`,
++            hiddenFlags: browserBackupHiddenFlags,
+         });
+ 
+         makeToast(t`Creating backup…`, 'info');
+@@ -132,8 +135,8 @@ export function Backup() {
+             }
+ 
+             const link = document.createElement('a');
+-            link.href = requestManager.getValidUrlFor(backupFileUrl, '');
+-            link.download = '';
++            link.href = backupFileUrl.startsWith('blob:') ? backupFileUrl : requestManager.getValidUrlFor(backupFileUrl, '');
++            link.download = browserLocal ? 'suwayomi-browser-backup.json' : '';
+             document.body.appendChild(link);
+             link.click();
+             document.body.removeChild(link);
+@@ -180,6 +183,7 @@ export function Backup() {
+     const restoreBackup = async (backup: File) => {
+         const flags = await AwaitableComponent.show(BackupFlagInclusionDialog, {
+             title: t`Restore Backup`,
++            hiddenFlags: browserBackupHiddenFlags,
+         });
+ 
+         try {
+@@ -196,12 +200,13 @@ export function Backup() {
+     };
+ 
+     const submitBackup = async (file: File) => {
+-        if (file.name.toLowerCase().endsWith('json')) {
++        const filename = file.name.toLowerCase();
++        if (!browserLocal && filename.endsWith('json')) {
+             makeToast(t`legacy backups are not supported!`, 'error');
+             return;
+         }
+ 
+-        const isValidFilename = file.name.toLowerCase().match(/proto\.gz$|tachibk$/g);
++        const isValidFilename = browserLocal ? filename.endsWith('json') : filename.match(/proto\.gz$|tachibk$/g);
+         if (!isValidFilename) {
+             makeToast(t`Invalid filetype`, 'error');
+             return;
+@@ -252,7 +257,10 @@ export function Backup() {
+         <>
+             <List sx={{ padding: 0 }}>
+                 <ListItemButton onClick={createBackup}>
+-                    <ListItemText primary={t`Create backup`} secondary={t`Back up library as a Tachiyomi backup`} />
++                    <ListItemText
++                        primary={t`Create backup`}
++                        secondary={browserLocal ? t`Back up library as a browser-local JSON backup` : t`Back up library as a Tachiyomi backup`}
++                    />
+                 </ListItemButton>
+                 <ListItemButton onClick={() => inputRef.current?.click()} disabled={!!backupRestoreId}>
+                     <ListItemText
+@@ -265,7 +273,7 @@ export function Backup() {
+                         </ListItemIcon>
+                     ) : null}
+                 </ListItemButton>
+-                <List
++                {!browserLocal && <List
+                     subheader={
+                         <ListSubheader component="div" id="backup-settings">
+                             {t`Automated backup`}
+@@ -339,7 +347,7 @@ export function Backup() {
+                         showSlider
+                         handleUpdate={(ttl: number) => updateSetting('backupTTL', ttl)}
+                     />
+-                </List>
++                </List>}
+             </List>
+             <input ref={mergedInputRef} type="file" style={{ display: 'none' }} />
+         </>
+diff --git a/src/features/extension/Extensions.utils.ts b/src/features/extension/Extensions.utils.ts
+index 37465a7..fa139bd 100644
+--- a/src/features/extension/Extensions.utils.ts
++++ b/src/features/extension/Extensions.utils.ts
+@@ -27,6 +27,8 @@ import { getErrorMessage } from '@/lib/HelperFunctions.ts';
+ import { i18n } from '@/i18n';
+ import { t } from '@lingui/core/macro';
+ import { ContentWarning } from '@/lib/graphql/generated/graphql-base.types.ts';
++import { getBrowserBackend } from '@browser-local/webui/backend.mjs';
++import { requestPermissionOrigins } from '@browser-local/extensions/permissions.mjs';
+ 
+ export const isNsfw = (contentWarning: ContentWarning): boolean => contentWarning !== ContentWarning.Safe;
+ 
+@@ -144,6 +146,19 @@ export const updateExtension = async (
+     action: ExtensionAction,
+ ): Promise<void> => {
+     try {
++        if (
++            import.meta.env.VITE_BROWSER_LOCAL === 'true' &&
++            action !== ExtensionAction.UNINSTALL
++        ) {
++            const browser = (globalThis as any).chrome;
++            if (!browser?.runtime?.id) {
++                throw new Error('Source-site permissions are available in the browser extension build.');
++            }
++            const origins = getBrowserBackend().extensionPermissionOrigins(pkgName);
++            if (origins.length && !(await requestPermissionOrigins(browser, origins))) {
++                throw new Error(`Browser access was not granted for ${origins.join(', ')}`);
++            }
++        }
+         switch (action) {
+             case ExtensionAction.INSTALL:
+                 await requestManager.updateExtension(pkgName, { install: true, isObsolete }).response;
+diff --git a/src/features/extension/store/screens/ExtensionStores.tsx b/src/features/extension/store/screens/ExtensionStores.tsx
+index 6027c28..4397db3 100644
+--- a/src/features/extension/store/screens/ExtensionStores.tsx
++++ b/src/features/extension/store/screens/ExtensionStores.tsx
+@@ -8,7 +8,7 @@
+ 
+ import { requestManager } from '@/lib/requests/RequestManager.ts';
+ import { EmptyViewAbsoluteCentered } from '@/base/components/feedback/EmptyViewAbsoluteCentered.tsx';
+-import { copyToClipboard, getErrorMessage, noOp } from '@/lib/HelperFunctions.ts';
++import { copyToClipboard, getErrorMessage } from '@/lib/HelperFunctions.ts';
+ import { defaultPromiseErrorHandler } from '@/lib/DefaultPromiseErrorHandler.ts';
+ import { useLingui } from '@lingui/react/macro';
+ import { LoadingPlaceholder } from '@/base/components/feedback/LoadingPlaceholder.tsx';
+@@ -29,18 +29,29 @@ import { makeToast } from '@/base/utils/Toast.ts';
+ import { DiscordIcon } from '@/assets/icons/svg/DiscordIcon.tsx';
+ import { Confirmation } from '@/base/AppAwaitableComponent.ts';
+ import Box from '@mui/material/Box';
++import Alert from '@mui/material/Alert';
+ import { ContentWarning } from '@/lib/graphql/generated/graphql-base.types.ts';
++import { permissionPattern, requestPermissionOrigins } from '@browser-local/extensions/permissions.mjs';
++import { repositoryUrl } from '@browser-local/extensions/repository.mjs';
++import { getPermissionRecovery } from '@browser-local/extensions/permission-recovery.mjs';
++import { BrowserPermissionPrompt, useBrowserPermissionRequests } from '@/base/components/BrowserPermissionPrompt';
+ import { DEFAULT_FULL_FAB_HEIGHT, StyledFab } from '@/base/components/buttons/StyledFab.tsx';
+ import AddIcon from '@mui/icons-material/Add';
+ import { AwaitableComponent, type AwaitableComponentProps } from 'awaitable-component';
+-import { TextSettingDialog } from '@/base/components/settings/text/TextSettingDialog.tsx';
+-import { useMemo } from 'react';
++import Dialog from '@mui/material/Dialog';
++import DialogTitle from '@mui/material/DialogTitle';
++import DialogContent from '@mui/material/DialogContent';
++import DialogActions from '@mui/material/DialogActions';
++import TextField from '@mui/material/TextField';
++import Button from '@mui/material/Button';
++import { useEffect, useMemo, useState } from 'react';
+ import { useAppTitle } from '@/features/navigation-bar/hooks/useAppTitle.ts';
+ import { ClipBoardGuard } from '@/base/components/guard/ClipBoardGuard.tsx';
+ 
+ const ExtensionStoreCard = ({
+     indexUrl,
+     name,
++    signingKey,
+     contactDiscord,
+     contactWebsite,
+     extensions: { totalCount: extensionCount },
+@@ -62,6 +73,12 @@ const ExtensionStoreCard = ({
+ 
+     const isNSfw = nsfwExtensionsData.dataState === 'complete' && nsfwExtensionsData.data?.extensions.totalCount;
+     const installedExtensionCount = installedExtensionsData.data?.extensions.totalCount;
++    const normalizedSigningKey = String(signingKey || '').replaceAll(':', '').toLowerCase();
++    const signerSummary = /^[a-f0-9]{64}$/.test(normalizedSigningKey)
++        ? `SHA-256 signer: ${normalizedSigningKey.slice(0, 6)}…${normalizedSigningKey.slice(-4)} (pinned)`
++        : signingKey
++          ? 'Invalid signer fingerprint — installs will be refused'
++          : 'No signer fingerprint — first install requires confirmation';
+ 
+     return (
+         <Box sx={{ p: 1, pb: 0 }}>
+@@ -93,6 +110,12 @@ const ExtensionStoreCard = ({
+                                   })}`
+                                 : null}
+                         </TypographyMaxLines>
++                        <TypographyMaxLines variant="caption" color="textSecondary" title={indexUrl} sx={{ overflowWrap: 'anywhere' }}>
++                            {indexUrl}
++                        </TypographyMaxLines>
++                        <TypographyMaxLines variant="caption" color="textSecondary" title={signingKey || undefined}>
++                            {signerSummary}
++                        </TypographyMaxLines>
+                     </Stack>
+                     <Stack
+                         sx={{
+@@ -193,19 +216,26 @@ const AddExtensionStoreDialog = ({
+     startCreation: (indexUrl: string) => void;
+ }) => {
+     const { t } = useLingui();
+-
+-    return (
+-        <TextSettingDialog
+-            settingName={t`Add extension store`}
+-            handleChange={startCreation}
+-            isDialogOpen={isVisible}
+-            setIsDialogOpen={noOp}
+-            onDismiss={onDismiss}
+-            onExitComplete={onExitComplete}
+-            value={indexUrl}
+-            disabled={processing}
+-        />
+-    );
++    const [value, setValue] = useState(indexUrl || '');
++    useEffect(() => { if (indexUrl) setValue(indexUrl); }, [indexUrl]);
++    const requests = useBrowserPermissionRequests().filter(request => request.operations.includes(`repository:${indexUrl}`));
++    const dismiss = () => {
++        if (processing && !requests.length) return;
++        getPermissionRecovery().cancel(`repository:${indexUrl}`);
++        onDismiss?.();
++    };
++    return <Dialog open={isVisible} onClose={dismiss} fullWidth onTransitionExited={onExitComplete}>
++        <DialogTitle>{t`Add extension store`}</DialogTitle>
++        <DialogContent>
++            <TextField autoFocus fullWidth label="Repository index URL" value={value} disabled={processing}
++                onChange={event => setValue(event.target.value)} sx={{ mt: 1, mb: 2 }} />
++            {requests.map(request => <BrowserPermissionPrompt key={request.origin} request={request} repository />)}
++        </DialogContent>
++        <DialogActions>
++            <Button onClick={dismiss} disabled={processing && !requests.length}>{t`Cancel`}</Button>
++            <Button onClick={() => startCreation(value)} disabled={processing || !value.trim()}>{t`Ok`}</Button>
++        </DialogActions>
++    </Dialog>;
+ };
+ 
+ export const ExtensionStores = () => {
+@@ -243,6 +273,10 @@ export const ExtensionStores = () => {
+ 
+     return (
+         <Box sx={{ pb: DEFAULT_FULL_FAB_HEIGHT }}>
++            {import.meta.env.VITE_BROWSER_LOCAL === 'true' && <Alert severity="warning" sx={{ m: 2 }}>
++                Only add repositories you trust. Extensions execute locally with access to runtime data and permitted sites.
++                APK/JAR signatures are verified before execution; repositories without a signer fingerprint and manual imports require confirmation.
++            </Alert>}
+             <VirtuosoPersisted
+                 persistKey="extension-store-list"
+                 useWindowScroll
+@@ -258,11 +292,24 @@ export const ExtensionStores = () => {
+                 onClick={() => {
+                     const addStoreDialog = AwaitableComponent.showControlled(AddExtensionStoreDialog, {
+                         startCreation: async (indexUrl) => {
++                            try {
++                            if (import.meta.env.VITE_BROWSER_LOCAL === 'true') indexUrl = repositoryUrl(indexUrl.trim());
++                            addStoreDialog.update({ indexUrl, processing: true });
++                            if (import.meta.env.VITE_BROWSER_LOCAL === 'true') {
++                                const browser = (globalThis as any).chrome;
++                                const origin = permissionPattern(indexUrl);
++                                if (!browser?.runtime?.id) {
++                                    throw new Error('Source-site permissions are available in the browser extension build.');
++                                }
++                                if (!origin) throw new Error('Extension store URL must use HTTP or HTTPS.');
++                                if (!await requestPermissionOrigins(browser, [origin])) {
++                                    throw new Error(`Browser access was not granted for ${origin}`);
++                                }
++                            }
+                             const request = addExtensionStore({ variables: { input: { indexUrl } } });
+ 
+                             addStoreDialog.update({ indexUrl, processing: true });
+ 
+-                            try {
+                                 await request;
+ 
+                                 requestManager.clearExtensionCache();
+diff --git a/src/features/reader/Reader.utils.ts b/src/features/reader/Reader.utils.ts
+index 6e5957d..5042617 100644
+--- a/src/features/reader/Reader.utils.ts
++++ b/src/features/reader/Reader.utils.ts
+@@ -26,6 +26,7 @@ import {
+     isContinuousVerticalReadingMode,
+ } from '@/features/reader/settings/ReaderSettings.utils.tsx';
+ import { Colors } from '@/lib/Colors.ts';
++import { requestManager } from '@/lib/requests/RequestManager.ts';
+ 
+ export const getInitialReaderPageIndex = (
+     resumeMode: ReaderResumeMode,
+@@ -290,36 +291,50 @@ export const createUpdateReaderPageLoadState =
+         const page = actualPages[pagesIndex];
+         const { index } = isPrimary ? page.primary : page.secondary!;
+ 
+-        const img = new Image();
+-        img.onload = () => {
+-            updatePageBackgroundColor(index, url, img, setPageBackgroundColors, readingMode).catch(
+-                defaultPromiseErrorHandler('updatePageBackgroundColor'),
+-            );
+-
+-            if (readingMode === ReadingMode.DOUBLE_PAGE) {
+-                const isSpreadPageFlag = isSpreadPage(img);
+-                if (!isSpreadPageFlag) {
+-                    return;
+-                }
+-
+-                setPagesToSpreadState((prevState) => {
+-                    const pageSpreadState = prevState[index];
+-
+-                    const isOfOutdatedSpreadState = pageSpreadState === undefined || pageSpreadState.url !== url;
+-                    if (isOfOutdatedSpreadState) {
+-                        return prevState;
++        const inspectImage = async () => {
++            let imageRequest: Awaited<ReturnType<typeof requestManager.requestImage>> | undefined;
++            try {
++                const imageUrl = import.meta.env.VITE_BROWSER_LOCAL === 'true'
++                    ? ((imageRequest = await requestManager.requestImage(url)), await imageRequest.response)
++                    : url;
++                const img = new Image();
++                img.onload = () => {
++                    updatePageBackgroundColor(index, url, img, setPageBackgroundColors, readingMode).catch(
++                        defaultPromiseErrorHandler('updatePageBackgroundColor'),
++                    );
++
++                    if (readingMode === ReadingMode.DOUBLE_PAGE) {
++                        const isSpreadPageFlag = isSpreadPage(img);
++                        if (!isSpreadPageFlag) {
++                            imageRequest?.cleanup();
++                            return;
++                        }
++
++                        setPagesToSpreadState((prevState) => {
++                            const pageSpreadState = prevState[index];
++
++                            const isOfOutdatedSpreadState = pageSpreadState === undefined || pageSpreadState.url !== url;
++                            if (isOfOutdatedSpreadState) {
++                                return prevState;
++                            }
++
++                            if (pageSpreadState.isSpread === isSpreadPageFlag) {
++                                return prevState;
++                            }
++
++                            return prevState.toSpliced(index, 1, { url, isSpread: isSpreadPageFlag });
++                        });
+                     }
+-
+-                    if (pageSpreadState.isSpread === isSpreadPageFlag) {
+-                        return prevState;
+-                    }
+-
+-                    return prevState.toSpliced(index, 1, { url, isSpread: isSpreadPageFlag });
+-                });
++                    imageRequest?.cleanup();
++                };
++                img.onerror = () => imageRequest?.cleanup();
++                img.crossOrigin = 'anonymous';
++                img.src = imageUrl;
++            } catch {
++                imageRequest?.cleanup();
+             }
+         };
+-        img.crossOrigin = 'anonymous';
+-        img.src = url;
++        void inspectImage();
+ 
+         setPageLoadStates((statePageLoadStates) => {
+             const pageLoadState = statePageLoadStates[index];
+diff --git a/src/features/settings/components/BrowserLocalDiagnostics.tsx b/src/features/settings/components/BrowserLocalDiagnostics.tsx
+new file mode 100644
+index 0000000..d20a007
+--- /dev/null
++++ b/src/features/settings/components/BrowserLocalDiagnostics.tsx
+@@ -0,0 +1,105 @@
++/* Copyright (C) Contributors to the Suwayomi project. MPL-2.0. */
++import { useEffect, useState } from 'react';
++import Button from '@mui/material/Button';
++import Stack from '@mui/material/Stack';
++import Typography from '@mui/material/Typography';
++import Alert from '@mui/material/Alert';
++import { getBrowserBackend } from '@browser-local/webui/backend.mjs';
++import { makeToast } from '@/base/utils/Toast.ts';
++
++export function BrowserLocalDiagnostics() {
++    const runtime = (globalThis as any).chrome?.runtime ?? (globalThis as any).browser?.runtime;
++    const [copying, setCopying] = useState(false);
++    const [storageRefresh, setStorageRefresh] = useState(0);
++    const [storageMetrics, setStorageMetrics] = useState<{
++        usage?: number;
++        quota?: number;
++        persisted: boolean | null;
++        pageCount: number;
++        pageBytes: number;
++        databaseBytes: number;
++    } | null>(null);
++    const [storageError, setStorageError] = useState('');
++
++    useEffect(() => {
++        let active = true;
++        if (import.meta.env.VITE_BROWSER_LOCAL !== 'true' || !runtime?.id) return () => { active = false; };
++        (async () => {
++            try {
++                const backend = getBrowserBackend();
++                await backend.loading;
++                const storage = globalThis.navigator?.storage;
++                let estimate: StorageEstimate = {};
++                try { estimate = await storage?.estimate?.() ?? {}; } catch { /* quota estimate is optional */ }
++                let persisted: boolean | null = null;
++                try { persisted = await storage?.persisted?.() ?? null; } catch { /* persistence status is optional */ }
++                const [pages, library] = await Promise.all([
++                    backend.store.getPrefixStats('settings', 'webui:page:'),
++                    backend.store.get('settings', 'webui:database'),
++                ]);
++                const serialized = JSON.stringify(library?.value ?? null);
++                const databaseBytes = new TextEncoder().encode(serialized ?? '').byteLength;
++                if (active) {
++                    setStorageMetrics({
++                        usage: estimate.usage,
++                        quota: estimate.quota,
++                        persisted,
++                        pageCount: pages.count,
++                        pageBytes: pages.blobBytes,
++                        databaseBytes,
++                    });
++                    setStorageError('');
++                }
++            } catch (cause: any) {
++                if (active) setStorageError(cause?.message || 'Storage metrics are unavailable');
++            }
++        })();
++        return () => { active = false; };
++    }, [runtime?.id, storageRefresh]);
++
++    if (import.meta.env.VITE_BROWSER_LOCAL !== 'true' || !runtime?.id) return null;
++
++    const formatBytes = (value?: number) => {
++        if (value == null || !Number.isFinite(value) || value < 0) return 'unknown';
++        if (value < 1024) return `${Math.round(value)} B`;
++        const units = ['KiB', 'MiB', 'GiB', 'TiB'];
++        let amount = value, unit = -1;
++        do { amount /= 1024; unit++; } while (amount >= 1024 && unit < units.length - 1);
++        return `${amount.toFixed(1)} ${units[unit]}`;
++    };
++
++    const copyDiagnostics = async () => {
++        if (copying) return;
++        setCopying(true);
++        try {
++            const text = await getBrowserBackend().getDiagnostics();
++            await globalThis.navigator.clipboard.writeText(text);
++            makeToast('Redacted diagnostics copied. Review before sharing.', 'success');
++        } catch {
++            makeToast('Could not copy diagnostics. Check clipboard access and try again.', 'error');
++        } finally {
++            setCopying(false);
++        }
++    };
++
++    return (
++        <Stack spacing={1}>
++            <Button variant="outlined" onClick={copyDiagnostics} disabled={copying}>
++                {copying ? 'Preparing diagnostics…' : 'Copy diagnostics'}
++            </Button>
++            <Typography variant="body2" color="text.secondary">
++                Copies a redacted summary locally. Nothing is sent automatically; review it before sharing.
++            </Typography>
++            <Typography variant="subtitle2" sx={{ pt: 1 }}>Browser storage</Typography>
++            {storageError ? <Alert severity="error">{storageError}</Alert> : <Typography variant="body2" color="text.secondary">
++                {storageMetrics ? <>
++                    {formatBytes(storageMetrics.usage)} used / {formatBytes(storageMetrics.quota)} quota; persisted: {storageMetrics.persisted == null ? 'unknown' : storageMetrics.persisted ? 'yes' : 'no'}.<br />
++                    Cached pages: {storageMetrics.pageCount} ({formatBytes(storageMetrics.pageBytes)}); library database: {formatBytes(storageMetrics.databaseBytes)}.
++                </> : 'Measuring browser-local storage…'}
++            </Typography>}
++            <Button variant="text" size="small" sx={{ alignSelf: 'flex-start' }} onClick={() => setStorageRefresh(value => value + 1)}>
++                Refresh storage metrics
++            </Button>
++        </Stack>
++    );
++}
+diff --git a/src/features/settings/screens/About.tsx b/src/features/settings/screens/About.tsx
+index ebf4496..823ca50 100644
+--- a/src/features/settings/screens/About.tsx
++++ b/src/features/settings/screens/About.tsx
+@@ -23,6 +23,7 @@ import { getErrorMessage } from '@/lib/HelperFunctions.ts';
+ import { epochToDate } from '@/base/utils/DateHelper.ts';
+ import { useAppTitle } from '@/features/navigation-bar/hooks/useAppTitle.ts';
+ import { DebugInformation } from '@/features/settings/components/DebugInformation.tsx';
++import { BrowserLocalDiagnostics } from '@/features/settings/components/BrowserLocalDiagnostics.tsx';
+ import Stack from '@mui/material/Stack';
+ 
+ export function About() {
+@@ -170,6 +171,7 @@ export function About() {
+                 }
+             >
+                 <Stack sx={{ px: 2, py: 1 }}>
++                    <BrowserLocalDiagnostics />
+                     <DebugInformation />
+                 </Stack>
+             </List>
+diff --git a/src/features/source/browse/screens/SourceMangas.tsx b/src/features/source/browse/screens/SourceMangas.tsx
+index a45873c..6c49f14 100644
+--- a/src/features/source/browse/screens/SourceMangas.tsx
++++ b/src/features/source/browse/screens/SourceMangas.tsx
+@@ -300,10 +300,10 @@ export function SourceMangas() {
+     const mangas = data?.fetchSourceManga?.mangas ?? STABLE_EMPTY_ARRAY;
+     const hasNextPage = !!data?.fetchSourceManga?.hasNextPage;
+     const isLoading = loading || (filteredOutAllItemsOfFetchedPage && hasNextPage);
+-    const { data: sourceData } = requestManager.useGetSource<GetSourceBrowseQuery, GetSourceBrowseQueryVariables>(
+-        GET_SOURCE_BROWSE,
+-        sourceId,
+-    );
++    const { data: sourceData, refetch: refetchSource } = requestManager.useGetSource<
++        GetSourceBrowseQuery,
++        GetSourceBrowseQueryVariables
++    >(GET_SOURCE_BROWSE, sourceId);
+     const source = sourceData?.source;
+ 
+     const filters = source?.filters ?? STABLE_EMPTY_ARRAY;
+@@ -396,6 +396,9 @@ export function SourceMangas() {
+     const resetFilters = () => {
+         setDialogFiltersToApply([]);
+         setFiltersToApply([]);
++        if (import.meta.env.VITE_BROWSER_LOCAL === 'true') {
++            refetchSource().catch(defaultPromiseErrorHandler('SourceMangas::refreshFilters'));
++        }
+     };
+ 
+     useEffect(() => {
+diff --git a/src/features/theme/services/ThemeFontLoader.ts b/src/features/theme/services/ThemeFontLoader.ts
+index 2e5a6f6..b13bb8c 100644
+--- a/src/features/theme/services/ThemeFontLoader.ts
++++ b/src/features/theme/services/ThemeFontLoader.ts
+@@ -161,6 +161,7 @@ export class ThemeFontLoader {
+     }
+ 
+     static async load(theme: CssVarsThemeOptions): Promise<void> {
++        if (import.meta.env.VITE_BROWSER_LOCAL === 'true') return; // Browser-local builds use installed system fonts.
+         const fontWeightsMap = this.extract(theme.typography ?? {});
+ 
+         const missingFontWeights = await this.detectMissing(fontWeightsMap);
+diff --git a/src/lib/requests/RequestManager.ts b/src/lib/requests/RequestManager.ts
+index b22219c..63ab558 100644
+--- a/src/lib/requests/RequestManager.ts
++++ b/src/lib/requests/RequestManager.ts
+@@ -1146,7 +1146,7 @@ export class RequestManager {
+         // not displayed, which then causes this issue once they get displayed
+         const shouldDecode = finalOptions.shouldDecode && navigator.userAgent.toLowerCase().includes('firefox');
+ 
+-        if (finalOptions.useFetchApi) {
++        if (import.meta.env.VITE_BROWSER_LOCAL === 'true' || finalOptions.useFetchApi) {
+             return this.fetchImageViaFetchApi(url, { ...finalOptions, shouldDecode });
+         }
+ 
+diff --git a/src/lib/requests/client/BrowserLocalLink.ts b/src/lib/requests/client/BrowserLocalLink.ts
+new file mode 100644
+index 0000000..653880f
+--- /dev/null
++++ b/src/lib/requests/client/BrowserLocalLink.ts
+@@ -0,0 +1,88 @@
++/*
++ * Copyright (C) Contributors to the Suwayomi project
++ * This Source Code Form is subject to the terms of the Mozilla Public
++ * License, v. 2.0. https://mozilla.org/MPL/2.0/.
++ */
++import { ApolloLink } from '@apollo/client';
++import { Observable } from 'rxjs';
++import { valueFromASTUntyped, GraphQLError } from 'graphql';
++import { getBrowserBackend } from '@browser-local/webui/backend.mjs';
++import { normalizeVariables } from '@browser-local/webui/variables.mjs';
++import { getPermissionRecovery } from '@browser-local/extensions/permission-recovery.mjs';
++
++const backend = () => getBrowserBackend();
++const argumentsFor = (node: any, variables: any) => Object.fromEntries((node.arguments || []).map((arg: any) => [arg.name.value, valueFromASTUntyped(arg.value, variables)]));
++const included = (node: any, variables: any) => (node.directives || []).every((directive: any) => {
++    const { if: condition } = argumentsFor(directive, variables);
++    return directive.name.value === 'skip' ? !condition : directive.name.value === 'include' ? !!condition : true;
++});
++function fields(selection: any, fragments: any, variables: any, type?: string): any[] {
++    return selection.selections.flatMap((node: any) => {
++        if (!included(node, variables)) return [];
++        if (node.kind === 'Field') return [node];
++        const fragment = node.kind === 'FragmentSpread' ? fragments[node.name.value] : node;
++        if (type && fragment.typeCondition?.name.value !== type) return [];
++        return fields(fragment.selectionSet, fragments, variables, type);
++    });
++}
++async function project(value: any, selection: any, fragments: any, variables: any): Promise<any> {
++    value = await value;
++    if (value == null) return null;
++    if (Array.isArray(value)) return Promise.all(value.map(item => project(item, selection, fragments, variables)));
++    const output: any = {};
++    for (const node of fields(selection, fragments, variables, value.__typename)) {
++        const name = node.name.value, key = node.alias?.value || name;
++        const member = value[name];
++        const resolved = typeof member === 'function' ? await member(argumentsFor(node, variables)) : await member;
++        const result = node.selectionSet ? await project(resolved, node.selectionSet, fragments, variables) : resolved ?? null;
++        output[key] = output[key] && result && !Array.isArray(result) && typeof result === 'object' ? { ...output[key], ...result } : result;
++    }
++    return output;
++}
++export const localFetch: typeof fetch = (input, options) => backend().fetch(String(input), options);
++export function createBrowserLocalLink(): ApolloLink {
++    return new ApolloLink(operation => new Observable(observer => {
++        const fragments = Object.fromEntries(operation.query.definitions.filter((node: any) => node.kind === 'FragmentDefinition').map((node: any) => [node.name.value, node]));
++        const definition: any = operation.query.definitions.find((node: any) => node.kind === 'OperationDefinition');
++        // Match JSON transport semantics: undefined object fields are omitted.
++        const variables = normalizeVariables({ ...Object.fromEntries((definition.variableDefinitions || []).filter((node: any) => node.defaultValue).map((node: any) => [node.variable.name.value, valueFromASTUntyped(node.defaultValue)])), ...operation.variables });
++        let disposed = false;
++        let running = false;
++        let dirty = false;
++        let knownDownloadIds: number[] | undefined;
++        const run = async () => {
++            if (disposed) return;
++            if (running) { dirty = true; return; }
++            running = true;
++            dirty = false;
++            try {
++                const data: any = {};
++                let nextKnownDownloadIds = knownDownloadIds;
++                for (const node of fields(definition.selectionSet, fragments, variables)) {
++                    const args = argumentsFor(node, variables);
++                    if (node.name.value === 'downloadStatusChanged') args.knownChapterIds = knownDownloadIds;
++                    const permissionKey = node.name.value === 'addExtensionStore'
++                        ? `repository:${args.input.indexUrl}`
++                        : ['updateExtension', 'updateExtensions'].includes(node.name.value) && !args.input.patch?.uninstall
++                            ? `install:${args.input.id || args.input.ids?.join(',')}` : null;
++                    const value = permissionKey
++                        ? await getPermissionRecovery().run(permissionKey, () => backend().resolve(node.name.value, args))
++                        : await backend().resolve(node.name.value, args);
++                    if (node.name.value === 'downloadStatusChanged') nextKnownDownloadIds = value.currentChapterIds;
++                    data[node.alias?.value || node.name.value] = node.selectionSet ? await project(value, node.selectionSet, fragments, variables) : value;
++                }
++                if (!disposed) { observer.next({ data }); knownDownloadIds = nextKnownDownloadIds; }
++            } catch (error: any) {
++                console.error(`Local GraphQL ${operation.operationName}:`, error);
++                if (!disposed) observer.next({ errors: [new GraphQLError(error.message)] });
++            } finally {
++                running = false;
++                if (dirty && definition.operation === 'subscription' && !disposed) void run();
++                if (definition.operation !== 'subscription' && !disposed) observer.complete();
++            }
++        };
++        void run();
++        if (definition.operation === 'subscription') backend().listeners.add(run);
++        return () => { disposed = true; backend().listeners.delete(run); };
++    }));
++}
+diff --git a/src/lib/requests/client/GraphQLClient.ts b/src/lib/requests/client/GraphQLClient.ts
+index 2759f54..70a23f6 100644
+--- a/src/lib/requests/client/GraphQLClient.ts
++++ b/src/lib/requests/client/GraphQLClient.ts
+@@ -13,6 +13,7 @@ import { ApolloClient, ApolloLink, CombinedGraphQLErrors, InMemoryCache, ServerE
+ import { filter, firstValueFrom, from, map, switchMap } from 'rxjs';
+ import UploadHttpLink from 'apollo-upload-client/UploadHttpLink.mjs';
+ import { GraphQLWsLink } from '@apollo/client/link/subscriptions';
++import { createBrowserLocalLink } from '@/lib/requests/client/BrowserLocalLink.ts';
+ import type { Client } from 'graphql-ws';
+ import { createClient } from 'graphql-ws';
+ import { getMainDefinition } from '@apollo/client/utilities';
+@@ -374,6 +375,7 @@ export class GraphQLClient extends BaseClient<ApolloClient, ApolloClient.Options
+     }
+ 
+     private createLink() {
++        if (import.meta.env.VITE_BROWSER_LOCAL === 'true') return createBrowserLocalLink();
+         const removeTypenameLink = new RemoveTypenameFromVariablesLink();
+ 
+         return ApolloLink.split(
+@@ -393,6 +395,10 @@ export class GraphQLClient extends BaseClient<ApolloClient, ApolloClient.Options
+     }
+ 
+     private createWSClient(lazy: boolean = true): void {
++        if (import.meta.env.VITE_BROWSER_LOCAL === 'true') {
++            this.wsClient = { dispose() {}, terminate() {} } as unknown as Client;
++            return;
++        }
+         const heartbeatInterval = d(20).seconds.inWholeMilliseconds;
+ 
+         this.wsClient = createClient({
+diff --git a/src/lib/requests/client/RestClient.ts b/src/lib/requests/client/RestClient.ts
+index 4da0a4b..8a2aae8 100644
+--- a/src/lib/requests/client/RestClient.ts
++++ b/src/lib/requests/client/RestClient.ts
+@@ -8,6 +8,7 @@
+ 
+ import { BaseClient } from '@/lib/requests/client/BaseClient.ts';
+ import { AuthManager } from '@/features/authentication/AuthManager.ts';
++import { localFetch } from '@/lib/requests/client/BrowserLocalLink.ts';
+ import type { AbortableApolloMutationResponse } from '@/lib/requests/RequestManager.ts';
+ import type { RefreshAccessTokenMutation } from '@/lib/graphql/generated/graphql.ts';
+ 
+@@ -55,7 +56,7 @@ export class RestClient
+                 await BaseClient.refreshAccessToken(this.handleRefreshToken);
+             }
+ 
+-            const updatedUrl = url.startsWith('http') ? url : `${this.getBaseUrl()}${url}`;
++            const updatedUrl = /^(?:https?|chrome-extension):/.test(url) ? url : `${this.getBaseUrl()}${url}`;
+             const isAuthRequired = AuthManager.isAuthRequired();
+             const accessToken = AuthManager.getAccessToken();
+ 
+@@ -121,7 +122,7 @@ export class RestClient
+     }
+ 
+     private createClient(): void {
+-        this.client = fetch.bind(window);
++        this.client = import.meta.env.VITE_BROWSER_LOCAL === 'true' ? localFetch : fetch.bind(window);
+     }
+ 
+     public updateConfig(config: RequestInit): void {
+diff --git a/vite.config.ts b/vite.config.ts
+index f470ca5..035d4f3 100644
+--- a/vite.config.ts
++++ b/vite.config.ts
+@@ -6,6 +6,7 @@
+  * file, You can obtain one at https://mozilla.org/MPL/2.0/.
+  */
+ 
++import { writeFileSync } from 'fs';
+ import path from 'path';
+ import { defineConfig } from 'vite';
+ import react from '@vitejs/plugin-react-swc';
+@@ -53,6 +54,7 @@ export default defineConfig(({ command }) => ({
+         tsconfigPaths: true,
+         alias: {
+             '@': path.resolve(import.meta.dirname, './src'),
++            '@browser-local': process.env.BROWSER_SOURCE_DIR || path.resolve(import.meta.dirname, '../Suwayomi-Server/browser/src'),
+         },
+     },
+     optimizeDeps: {
+@@ -65,7 +67,7 @@ export default defineConfig(({ command }) => ({
+         lingui({
+             failOnCompileError: true,
+         }),
+-        legacy({
++        process.env.VITE_BROWSER_LOCAL !== 'true' && legacy({
+             modernPolyfills: [
+                 'es/array/to-spliced',
+                 'es/array/to-sorted',
+@@ -75,7 +77,7 @@ export default defineConfig(({ command }) => ({
+             ],
+         }),
+         // Only setup image runtime caching
+-        VitePWA({
++        process.env.VITE_BROWSER_LOCAL !== 'true' && VitePWA({
+             registerType: 'autoUpdate',
+             manifest: false, // Use existing manifest
+             devOptions: {
+@@ -143,13 +145,27 @@ export default defineConfig(({ command }) => ({
+                 ],
+             },
+         }),
++        // Release builds record the modules bundled into the output so the packaging step can ship exactly their
++        // licence texts (see scripts/package-extension.mjs). Inert unless BROWSER_MODULE_LIST is set.
++        process.env.BROWSER_MODULE_LIST && {
++            name: 'browser-local-module-list',
++            apply: 'build',
++            generateBundle(_options: unknown, bundle: Record<string, any>) {
++                const modules = new Set<string>();
++                for (const item of Object.values(bundle)) {
++                    if (item.type === 'chunk') Object.keys(item.modules).forEach((id) => modules.add(id));
++                    else (item.originalFileNames || []).forEach((name: string) => modules.add(name));
++                }
++                writeFileSync(process.env.BROWSER_MODULE_LIST as string, `${JSON.stringify([...modules].sort(), null, 2)}\n`);
++            },
++        },
+         {
+             name: 'inject-base-tag',
+             enforce: 'post',
+             transformIndexHtml() {
+                 // Ensure the base tag is placed at the top of the header before any vite injected script
+                 // For example, the plugin-legacy injects the modern polyfill script at the top of the header above the base tag, resulting in an invalid url
+-                return { tags: [{ tag: 'base', attrs: { href: '/' } }] };
++                return { tags: [{ tag: 'base', attrs: { href: process.env.VITE_BROWSER_LOCAL === 'true' ? './' : '/' } }] };
+             },
+         },
+     ],

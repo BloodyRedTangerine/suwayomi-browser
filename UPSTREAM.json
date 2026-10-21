@@ -1,0 +1,32 @@
+{
+  "server": {
+    "repository": "https://github.com/Suwayomi/Suwayomi-Server",
+    "revision": "e2ce828abb81f0f5ce1a3fb86194a2746b519c85",
+    "use": "Gradle reads the Tachiyomi/Mihon extension API sources from server/src/main/kotlin and AndroidCompat/src/main/java (unmodified)"
+  },
+  "webui": {
+    "repository": "https://github.com/Suwayomi/Suwayomi-WebUI",
+    "revision": "579f5e899fb3e27d4be8340eba64968e6bd0d061",
+    "localPatch": "webui/browser-local.patch",
+    "syntheticSources": false,
+    "offlineTest": false
+  },
+  "vm": {
+    "repository": "https://github.com/anematode/b-jvm",
+    "revision": "3fd56c74656602eb32efefca46f51f074bef6bca",
+    "patch": "jvm/vm-patches/extension-runtime.patch"
+  },
+  "zstd": {
+    "repository": "https://github.com/facebook/zstd",
+    "revision": "f8745da6ff1ad1e7bab384bd1f9d742439278e99",
+    "version": "1.5.7",
+    "mode": "statically linked single-threaded WASM",
+    "squareApiRevision": "4fbdf35df030888d2a0cce4a84329d107438134f"
+  },
+  "corretto": {
+    "version": "23.0.2.7.1",
+    "url": "https://corretto.aws/downloads/resources/23.0.2.7.1/amazon-corretto-23.0.2.7.1-linux-x64.tar.gz",
+    "sha256": "0370c1b48048e55619eff9beace91077da9ece35d4a57d0c5513cd546341c09c",
+    "use": "class libraries and resources (jlink image) for the bundled JRE; never executed"
+  }
+}
