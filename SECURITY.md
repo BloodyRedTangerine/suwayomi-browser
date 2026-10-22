@@ -1,28 +1,25 @@
-# Security policy
+# Security
 
-## Reporting a vulnerability
+## Reporting a problem
 
-Please report suspected vulnerabilities **privately** through GitHub: *Security* tab > *Report a vulnerability* on
-https://github.com/BloodyRedTangerine/suwayomi-browser (private vulnerability reporting). If that is unavailable, open an issue that says only that you have a security
-report and how to contact you, without details. Please allow reasonable time for a fix before public disclosure.
+Please report security problems privately: open the **Security** tab of this repository and choose **Report a vulnerability**.
+If that doesn't work, open an issue that only says you have a security report, without details, and I'll contact you.
 
-Supported: the latest release. This is a hobby project without a service-level agreement.
+Only the latest release gets fixes. This is a hobby project, so fixes come as time allows.
 
-## Scope and trust model
+## How the extension protects you
 
-In scope: the extension code in this repository, its sandbox boundaries and its build scripts.
+- **Sources are third-party code.** They run in a separate sandbox (a Java virtual machine compiled to WebAssembly) that cannot
+  use the browser's extension features. They can only ask the extension to fetch pages, and only from sites you allowed.
+- **Signatures are checked.** A source package must be signed, and its signature is checked before it runs. Unsigned or
+  modified packages are refused, and a source cannot switch to a different signing key on update.
+- **Site access is opt-in.** Nothing is granted at install. The browser asks you the first time each site is needed.
+- **No data collection.** Nothing is sent to the developer.
 
-- Source extensions are **third-party code**. They run in a WebAssembly JVM inside a Worker with no WebExtension API access;
-  the only channel out is the message protocol to the source broker, which enforces the user-granted host list.
-- Package integrity: APK Signature Scheme v2 and JAR v1 signatures are verified before execution; unsigned, invalidly signed
-  or downgraded (v3/v3.1 stripping) archives are refused, repository signing keys are pinned and key changes are refused.
-- Host access is optional and requested per registrable domain; no host permission is granted at install.
-- The extension does not collect or transmit user data to the developer.
+Not covered: the content or behavior of the repositories and sources you choose to add, and bugs in upstream projects (please
+report those upstream too).
 
-Out of scope: the content, behaviour or safety of third-party sources and repositories you choose to add; vulnerabilities in
-upstream projects that are not specific to this integration (report those upstream, but tell us too).
+## Checking a download
 
-## Release integrity
-
-Releases are built reproducibly (see docs/REPRODUCIBLE-BUILD.md) and published with SHA-256 sums. The Chrome/Edge manifest
-contains only the public part of the extension key.
+Each release lists SHA-256 hashes in `SHA256SUMS`. The packages can be rebuilt from this repository and compared byte for
+byte; see [docs/REPRODUCIBLE-BUILD.md](docs/REPRODUCIBLE-BUILD.md).

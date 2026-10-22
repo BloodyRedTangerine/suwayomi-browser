@@ -18,7 +18,7 @@ ui-*
 *.crx
 *-unpacked
 browser-profile*
-# Raw logs and captures (the synthetic AMO screenshots are the only images tracked)
+# Raw logs and captures (the README screenshots are the only images tracked)
 *.log
 *.txt
 !THIRD_PARTY_LICENSES/**
@@ -31,7 +31,7 @@ browser-profile*
 *.jpeg
 *.gif
 *.webp
-!AMO/screenshots/*.png
+!docs/screenshots/*.png
 # Keys and credentials: never
 *.pem
 *.key

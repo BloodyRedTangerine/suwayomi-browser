@@ -21,7 +21,7 @@ This builds `docker/Dockerfile` (tool versions below, all pinned by version and 
 | Path | Content |
 |---|---|
 | `firefox/`, `chrome/` | The unpacked extension packages. |
-| `suwayomi-browser-firefox-0.3.6.zip`, `suwayomi-browser-0.3.6.zip` | The deterministic release ZIPs (the Firefox one is the AMO upload). |
+| `suwayomi-browser-firefox-0.3.6.zip`, `suwayomi-browser-0.3.6.zip` | The release ZIPs (the Firefox one is what gets uploaded to addons.mozilla.org). |
 | `SHA256SUMS`, `files-firefox.sha256`, `files-chrome.sha256` | ZIP hashes and sorted per-file hashes of both packages. |
 | `reports/` | `web-ext lint` output (text and JSON) and the tool versions used. |
 
@@ -92,8 +92,7 @@ GECKODRIVER=/path/to/geckodriver node test/package-gate-firefox.mjs out/suwayomi
 
 Lint: `npx web-ext@10.5.0 lint --source-dir out/firefox`.
 
-## Source layout and the b-jvm / WebUI patches
+## Patched upstream projects
 
-b-jvm (WebAssembly JVM) and Suwayomi-WebUI are first-party patched forks: the patches in this repository are applied to the
-pinned upstream revisions at build time. They are not third-party libraries with modifications hidden in the bundle; the
-build output can be reproduced from this repository alone.
+b-jvm and Suwayomi-WebUI are not vendored. The build clones them at the pinned revisions in `UPSTREAM.json` and applies the
+patches from this repository (`jvm/vm-patches/extension-runtime.patch`, `webui/browser-local.patch`).
