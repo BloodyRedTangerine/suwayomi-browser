@@ -31,6 +31,7 @@ public final class ExtensionHost {
     public static String zstdProbe() { return ZstdSmoke.verify(); }
     public static String zstdSafetyProbe() { return ZstdSmoke.verifyBrowserSafety(); }
     public static String localeDataProbe() { return LocaleDataProbe.verify(); }
+    public static String runtimeResourceProbe() { return RuntimeResourceProbe.run(); }
     public static String jvmDefaultsProbe() { return JvmDefaultsProbe.snapshot(); }
     public static String dateFailureProbe(String value) { return DateFailureProbe.run(value); }
     public static String exceptionHandlingProbe() throws Exception { return ExceptionHandlingProbe.run(); }

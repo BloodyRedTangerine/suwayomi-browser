@@ -872,8 +872,7 @@ export class BovineVM<Classes> {
 const runtimeFilesList = `jdk23/lib/modules
 jdk23/lib/security/default.policy
 jdk23/conf/security/java.security
-jdk23/conf/security/java.policy
-jdk23.jar`.split('\n');
+jdk23/conf/security/java.policy`.split('\n');
 
 const TOTAL_BYTES = 1 << 26;
 

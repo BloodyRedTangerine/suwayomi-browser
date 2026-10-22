@@ -38,4 +38,4 @@ node check-public-tree.mjs --list-allowlist      # every allowlist entry with it
 | `THIRD_PARTY_LICENSES/**` in packages | content-warning enum, CDN vendor name | Verbatim licence texts. Third-party author addresses inside notices (licence texts, `legal/`, compiled library metadata) are not flagged. |
 | Compiled host JAR in packages | the two API-identifier names above | Same identifiers, compiled. |
 | `runtime/extension-host.jar!/com/ibm/icu/impl/data/icudata/unames.icu` | one adult-content term | ICU4J Unicode character-name data (the script name "Hentaigana"). |
-| `vendor/bjvm/jre/jdk23.jar!/.../XMLEntityManager.class` | `/home/` path | Unmodified OpenJDK class containing a constant example path from the JDK sources; not a build-machine path. |
+| OpenJDK `lib/modules`, `XMLEntityManager.class` | `/home/` path | Unmodified OpenJDK class containing a constant example path from the JDK sources; not a build-machine path. |

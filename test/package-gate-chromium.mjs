@@ -29,6 +29,9 @@ class Cdp {
     await new Promise((resolveOpen, reject) => { this.ws.addEventListener('open', resolveOpen, { once: true }); this.ws.addEventListener('error', reject, { once: true }); });
     this.ws.addEventListener('message', event => {
       const message = JSON.parse(String(event.data)); const pending = this.pending.get(message.id);
+      if (message.method === 'Runtime.exceptionThrown' || message.method === 'Runtime.consoleAPICalled' && message.params.type === 'error') {
+        (report.consoleErrors ||= []).push(message.params);
+      }
       if (!pending) return;
       this.pending.delete(message.id); clearTimeout(pending.timer);
       message.error ? pending.reject(new Error(message.error.message)) : pending.resolve(message.result || {});
@@ -46,7 +49,11 @@ class Cdp {
     const { targetId } = await this.send('Target.createTarget', { url: 'about:blank' });
     const { sessionId } = await this.send('Target.attachToTarget', { targetId, flatten: true });
     await this.send('Page.enable', {}, sessionId);
+    await this.send('Runtime.enable', {}, sessionId);
+    await this.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false }, sessionId);
     await this.send('Page.navigate', { url }, sessionId);
+    await this.send('Target.activateTarget', { targetId });
+    await this.send('Page.bringToFront', {}, sessionId);
     return { targetId, sessionId };
   }
   async evaluate(sessionId, expression, timeout = 60000) {
@@ -67,6 +74,7 @@ try {
   if (problems.length) throw new Error('Chromium manifest: ' + problems.join(', '));
   report.version = manifest.version;
   const args = [...(process.env.GATE_HEADED ? [] : ['--headless=new']), '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--enable-unsafe-extension-debugging',
+    '--disable-backgrounding-occluded-windows', '--disable-renderer-backgrounding', '--disable-background-timer-throttling',
     '--proxy-server=http://127.0.0.1:9', '--proxy-bypass-list=<-loopback>', '--disable-background-networking', '--disable-component-update',
     `--remote-debugging-port=${port}`, `--user-data-dir=${join(root, 'profile')}`, `--load-extension=${packagePath}`, 'about:blank'];
   browser = spawn(binary, args, { env: { ...process.env, TMPDIR: root }, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -86,6 +94,9 @@ try {
   const grants = await cdp.evaluate(sessionId, 'chrome.permissions.getAll()');
   if (grants.origins?.length) throw new Error('Host permissions granted at install: ' + grants.origins);
   check('pinned extension ID, no host permissions granted, manifest key present', { id: identity, version: manifest.version });
+  // A fresh install opens a WebUI tab. Close it before the out-of-band seed
+  // so an already-mounted backend cannot race this isolated test database.
+  report.closedFirstRunTabs = await cdp.evaluate(sessionId, '(async()=>{const prefix=chrome.runtime.getURL("ui/");const ids=(await chrome.tabs.query({})).filter(tab=>tab.url?.startsWith(prefix)).map(tab=>tab.id);if(ids.length)await chrome.tabs.remove(ids);return ids.length})()');
 
   const regression = await cdp.evaluate(sessionId, `(async()=>{
     ${regressionSource}
@@ -97,6 +108,8 @@ try {
   if (!regression.pass) throw new Error('WebAssembly JVM regression failed: ' + JSON.stringify(regression).slice(0, 2000));
   check('WebAssembly JVM regression suite passes in the package', { steps: Object.keys(regression.steps) });
 
+  report.closedFirstRunTabs += await cdp.evaluate(sessionId, '(async()=>{const prefix=chrome.runtime.getURL("ui/");const ids=(await chrome.tabs.query({})).filter(tab=>tab.url?.startsWith(prefix)).map(tab=>tab.id);if(ids.length)await chrome.tabs.remove(ids);return ids.length})()');
+
   const seeded = await cdp.evaluate(sessionId, `(async()=>{
     const {IndexedDbStore}=await import(chrome.runtime.getURL('src/core.mjs'));
     const {BrowserBackend}=await import(chrome.runtime.getURL('src/webui/backend.mjs'));
@@ -104,12 +117,24 @@ try {
     await backend.loading;
     const rows=['Alpha','Beta'].map(name=>backend.rememberManga('fixture',{title:'Sample Series '+name,url:'/sample-'+name.toLowerCase(),author:'Sample Author',description:'Synthetic library preview',genre:[],thumbnailUrl:'synthetic:'+name}));
     for(const row of rows){row.inLibrary=true;Object.assign(row,{initialized:true,lastFetchedAt:Date.now(),chaptersLastFetchedAt:Date.now(),genre:[],browserGenreRaw:''});}
+    await backend.rememberChapters(rows[0],[{url:'/sample-chapter-1',name:'Sample Chapter 1',number:1,dateUpload:Date.now()}]);
     await backend.save();backend.dispose();return rows.length;
   })()`);
   if (seeded !== 2) throw new Error('Synthetic seed failed');
   const ui = await cdp.page(base + 'ui/index.html#/library');
   let text = '';
-  for (let index = 0; index < 300 && !text.includes('Sample Series Alpha'); index++) { text = await cdp.evaluate(ui.sessionId, 'document.body?.innerText||""'); await wait(100); }
+  for (let index = 0; index < 300 && !text.includes('Sample Series Alpha'); index++) {
+    text = await cdp.evaluate(ui.sessionId, 'document.body?.innerText||""');
+    // Explicit viewport resize wakes virtual-list measurements in isolated
+    // Chromium windows with no compositor-driven desktop resize event.
+    if (index === 30) {
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1279, height: 899, deviceScaleFactor: 1, mobile: false }, ui.sessionId);
+      await wait(100);
+      await cdp.send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false }, ui.sessionId);
+    }
+    await wait(100);
+  }
+  report.libraryDiagnostics = await cdp.evaluate(ui.sessionId, '(async()=>{const {IndexedDbStore}=await import(chrome.runtime.getURL("src/core.mjs"));return {innerText:document.body.innerText,textContent:document.body.textContent,width:innerWidth,height:innerHeight,html:document.querySelector("main")?.innerHTML,url:location.href,stored:await new IndexedDbStore().get("settings","webui:database")}})()');
   if (!text.includes('Sample Series Alpha') || !text.includes('Sample Series Beta')) throw new Error('Synthetic library did not render');
   check('official WebUI renders the synthetic library', { entries: 2 });
 

@@ -5,6 +5,7 @@ import { unzipSync } from 'fflate';
 import { assertNoPrivateKeyMaterial } from './package-output-guard.mjs';
 import { targetManifest } from './target-manifest.mjs';
 import { root, upstream } from './paths.mjs';
+import { assertRuntimeInventory } from './runtime-inventory-guard.mjs';
 
 // Usage: node scripts/package-extension.mjs <new absolute output directory> [--target=chrome|firefox]
 // The output is the unpacked extension only: product files, LICENSE, DEPENDENCIES.json and THIRD_PARTY_LICENSES.
@@ -19,9 +20,14 @@ if (!target || !isAbsolute(target)) throw new Error('Provide a new absolute outp
 const uiProvenance = JSON.parse(await readFile(resolve(root, 'ui/UPSTREAM.json'), 'utf8'));
 if (uiProvenance.syntheticSources !== false || uiProvenance.offlineTest !== false) throw new Error('Rebuild the production WebUI; packaging an unmarked, synthetic-source or offline-test frontend is not allowed.');
 const dependencies = (await readFile(resolve(root, 'jvm/build/runtime-dependencies.tsv'), 'utf8')).trim().split('\n').filter(Boolean).sort();
-for (const path of ['manifest.json', 'ui/UPSTREAM.json', 'runtime/extension-host.jar', 'runtime/vm/bjvm_main.wasm', 'vendor/bjvm/bjvm.mjs', 'vendor/bjvm/jre/PROVENANCE.json', 'vendor/quickjs.wasm', 'vendor/webui-modules.json', 'vendor/js-modules.json'])
+for (const path of ['manifest.json', 'ui/UPSTREAM.json', 'runtime/extension-host.jar', 'runtime/vm/bjvm_main.wasm', 'vendor/bjvm/bjvm.mjs', 'vendor/bjvm/jre/jdk23/lib/modules', 'vendor/bjvm/jre/PROVENANCE.json', 'vendor/quickjs.wasm', 'vendor/webui-modules.json', 'vendor/js-modules.json'])
   await access(resolve(root, path));
 for (const name of ['LICENSE', 'ZSTD-LICENSE', 'ZSTD-COPYING', 'ZSTD-PROVENANCE.json']) await access(resolve(root, 'vendor/bjvm', name));
+const hostEntries = [];
+unzipSync(await readFile(resolve(root, 'runtime/extension-host.jar')), { filter: entry => { hostEntries.push(entry.name); return false; } });
+const runtimeFiles = ['jdk23/lib/modules'];
+if (await access(resolve(root,'vendor/bjvm/jre/jdk23.jar')).then(()=>true,()=>false)) runtimeFiles.push('jdk23.jar');
+assertRuntimeInventory({ runtimeFiles, hostEntries });
 const licenseFile = await access(resolve(root, 'LICENSE')).then(() => resolve(root, 'LICENSE'), () => resolve(root, '../LICENSE'));
 await mkdir(target); // Deliberately fails if the target already exists.
 const copy = async (source, destination, filter) => {

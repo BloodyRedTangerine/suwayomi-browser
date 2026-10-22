@@ -1,5 +1,5 @@
 // Minimal deterministic ZIP writer: sorted entries, one fixed timestamp, no extra fields, no attributes.
-// Used for jdk23.jar and for the release archives, so identical inputs give identical bytes on any machine/time zone.
+// Used for release archives, so identical inputs give identical bytes on any machine/time zone.
 import { deflateRawSync, crc32 } from 'node:zlib';
 
 function dosDateTime(epochSeconds) {

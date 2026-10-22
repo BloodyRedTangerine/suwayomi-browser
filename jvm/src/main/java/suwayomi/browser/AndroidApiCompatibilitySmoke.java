@@ -149,6 +149,28 @@ public final class AndroidApiCompatibilitySmoke {
         int wordStart = words.first(), wordEnd = words.next();
         if (wordStart != 0 || wordEnd <= wordStart || words.getRuleStatus() < 0)
             throw new AssertionError("ICU word boundary iteration failed");
+        com.ibm.icu.text.BreakIterator characters = com.ibm.icu.text.BreakIterator.getCharacterInstance(java.util.Locale.ROOT);
+        String graphemes = "e\u0301👩‍👩‍👧‍👦";
+        characters.setText(graphemes);
+        if (characters.first() != 0 || characters.next() != 2 || characters.next() != graphemes.length() ||
+            characters.next() != com.ibm.icu.text.BreakIterator.DONE)
+            throw new AssertionError("ICU combining/ZWJ grapheme segmentation failed");
+        for (String language : new String[]{"th", "ja", "zh", "km", "lo", "my"}) {
+            String sample = switch (language) {
+                case "th" -> "ภาษาไทยภาษาไทย";
+                case "km" -> "ភាសាខ្មែរភាសាខ្មែរ";
+                case "lo" -> "ພາສາລາວພາສາລາວ";
+                case "my" -> "မြန်မာဘာသာမြန်မာဘာသာ";
+                default -> "日本語の文章中文文本";
+            };
+            com.ibm.icu.text.BreakIterator lines = com.ibm.icu.text.BreakIterator.getLineInstance(java.util.Locale.forLanguageTag(language));
+            lines.setText(sample); int count = 0, end = lines.first();
+            for (int next; (next = lines.next()) != com.ibm.icu.text.BreakIterator.DONE;) { count++; end = next; }
+            if (count < 2 || end != sample.length()) throw new AssertionError("ICU dictionary line segmentation failed: " + language);
+        }
+        if (com.ibm.icu.lang.UCharacter.getDirection('א') != com.ibm.icu.lang.UCharacterDirection.RIGHT_TO_LEFT ||
+            com.ibm.icu.lang.UCharacter.getDirection('ا') != com.ibm.icu.lang.UCharacterDirection.RIGHT_TO_LEFT_ARABIC)
+            throw new AssertionError("ICU bidi properties failed");
         return "Android activity/intent state, View tree and TextView input/selection controls, Toast state, bitmap crop, HTML text extraction, Canvas transforms, ICU line/grapheme-aware StaticLayout.Builder line ranges, and ICU normalization/search/boundary APIs verified";
     }
 }

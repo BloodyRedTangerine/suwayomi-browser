@@ -9,7 +9,7 @@ native helper or server is involved.
 > It reuses their open-source work (credits below). Compatibility is partial: not every source or Android API is supported.
 
 - Targets: Firefox desktop and Firefox for Android (Firefox 154 or later), Chrome and Edge (Manifest V3).
-- Version: 0.3.5. Licence: [MPL-2.0](LICENSE). Support: [GitHub issues](https://github.com/BloodyRedTangerine/suwayomi-browser/issues).
+- Version: 0.3.6. Licence: [MPL-2.0](LICENSE). Support: [GitHub issues](https://github.com/BloodyRedTangerine/suwayomi-browser/issues).
 - **No content is bundled.** The extension ships with no sources and no repositories. You choose which repository URL to add
   and which sources to install, like a user-script manager. Third-party sources are third-party code: review and trust them
   before use.
@@ -32,7 +32,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details and [SECURITY.md](S
 - **Firefox / Firefox for Android:** install from addons.mozilla.org once listed (search "Suwayomi Browser (unofficial)").
   Add-on ID: `suwayomi-browser@bloodyredtangerine`. The Firefox ZIP in the GitHub release is the unsigned package that is submitted to AMO; for
   development it can be loaded temporarily from `about:debugging`.
-- **Chrome / Edge:** download `suwayomi-browser-0.3.5.zip` from the GitHub release, unzip it, open
+- **Chrome / Edge:** download `suwayomi-browser-0.3.6.zip` from the GitHub release, unzip it, open
   `chrome://extensions` (or `edge://extensions`), enable *Developer mode* and choose *Load unpacked*.
   The manifest carries the **public** part of the extension key (`key`), which pins the extension ID to `jcjicocbfnajldjccnfnglphngckjkfn`
   so data survives reinstalls. It is a public key; the private key is not in this repository. Firefox builds strip it.

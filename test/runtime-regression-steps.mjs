@@ -3,6 +3,7 @@
 // package-gate-firefox.mjs. Keep this file free of imports so it can be evaluated as a plain script.
 export async function runRegression(runtime) {
   const steps = {};
+  let runtimeResources;
   const expect = (condition, message) => { if (!condition) throw new Error(message); };
   async function step(name, run) {
     const started = performance.now();
@@ -10,6 +11,15 @@ export async function runRegression(runtime) {
     catch (error) { steps[name] = { pass: false, error: String(error?.message || error).slice(0, 600), ms: Math.round(performance.now() - started) }; }
   }
   await step('vm-start-and-host-smoke', async () => { const text = await runtime.smoke(); expect(typeof text === 'string' && text.length > 0, 'empty smoke result'); return text; });
+  await step('jre-resources', async () => {
+    runtimeResources = await runtime.request('runtime-resources-probe');
+    expect(runtimeResources?.moduleImagePresent === true, 'module image missing');
+    for (const key of ['classResource','moduleResource','moduleLayer','jrt','normalization','zoneData'])
+      expect(runtimeResources[key]?.startsWith('ok:'), key + ': ' + runtimeResources[key]);
+    expect(runtimeResources.normalization === 'ok:é', 'JDK normalization changed');
+    expect(runtimeResources.zoneData === 'ok:+09:00', 'JDK time-zone data changed');
+    return JSON.stringify(runtimeResources);
+  });
   // Exception handling: catches in child-loader classes, native exceptions and GC-rooted pending exceptions.
   await step('exception-handling', async () => {
     const actual = await runtime.request('exception-handling-probe');
@@ -34,5 +44,5 @@ export async function runRegression(runtime) {
   await step('reference-semantics', () => runtime.request('reference-smoke'));
   await step('zstd-native', async () => `${await runtime.request('zstd-smoke')}; ${await runtime.request('zstd-safety-smoke')}`);
   await step('cookie-store', () => runtime.request('webkit-cookie-smoke'));
-  return { pass: Object.values(steps).every(item => item.pass), steps };
+  return { pass: Object.values(steps).every(item => item.pass), steps, runtimeResources };
 }

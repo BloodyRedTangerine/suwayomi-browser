@@ -21,7 +21,7 @@ This builds `docker/Dockerfile` (tool versions below, all pinned by version and 
 | Path | Content |
 |---|---|
 | `firefox/`, `chrome/` | The unpacked extension packages. |
-| `suwayomi-browser-firefox-0.3.5.zip`, `suwayomi-browser-0.3.5.zip` | The deterministic release ZIPs (the Firefox one is the AMO upload). |
+| `suwayomi-browser-firefox-0.3.6.zip`, `suwayomi-browser-0.3.6.zip` | The deterministic release ZIPs (the Firefox one is the AMO upload). |
 | `SHA256SUMS`, `files-firefox.sha256`, `files-chrome.sha256` | ZIP hashes and sorted per-file hashes of both packages. |
 | `reports/` | `web-ext lint` output (text and JSON) and the tool versions used. |
 
@@ -53,8 +53,9 @@ Gradle wrapper JAR SHA-256: `3b8a25775a69158b5ad2b1d17a80a88dc7b40a352a73eb27d06
    verification on; only the first of these tasks is needed for the package, the second records the dependency list).
 4. `npm run build:vm`: clones b-jvm at the pinned revision, applies `jvm/vm-patches/extension-runtime.patch`, compiles to
    WebAssembly with Emscripten (`-ffile-prefix-map` keeps build paths out of the output) and bundles the JavaScript wrapper.
-5. `npm run prepare:runtime`: downloads the pinned Corretto build, links a JRE image, extracts the class libraries into
-   `vendor/bjvm/jre/jdk23.jar` (sorted entries, fixed timestamps) and bundles fflate and QuickJS.
+5. `npm run prepare:runtime`: downloads the pinned Corretto build and links a JRE image. Its `jdk23/lib/modules` JIMAGE is
+   shared by the bootstrap loader and Java's `jrt:/` provider; no duplicate `jdk23.jar` is shipped. The full selected locale
+   data and module metadata remain. The step also bundles fflate and QuickJS.
 6. `npm run build:webui`: clones Suwayomi-WebUI at the pinned revision, applies `webui/browser-local.patch`, installs with
    `pnpm install --frozen-lockfile` and builds with Vite. With `BROWSER_RELEASE_EDITS=1` (set by `docker/build.sh`) it also empties
    the upstream list of third-party site names that the WebUI uses to guess an entry's type from its source name
@@ -86,7 +87,7 @@ JVM regression suite inside the package (exception handling, locale data, UTF-16
 rendering in the WebUI, the About screen and the launcher (no duplicate tab). It needs Firefox and geckodriver:
 
 ```sh
-GECKODRIVER=/path/to/geckodriver node test/package-gate-firefox.mjs out/suwayomi-browser-firefox-0.3.5.zip
+GECKODRIVER=/path/to/geckodriver node test/package-gate-firefox.mjs out/suwayomi-browser-firefox-0.3.6.zip
 ```
 
 Lint: `npx web-ext@10.5.0 lint --source-dir out/firefox`.

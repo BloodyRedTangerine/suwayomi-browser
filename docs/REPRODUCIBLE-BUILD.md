@@ -7,7 +7,7 @@ unpacked packages and identical ZIPs, regardless of build time, host path or con
 
 | Source of variation | Handling |
 |---|---|
-| Timestamps | `SOURCE_DATE_EPOCH` (file in the tree, 2026-10-21T00:00:00Z) is the only time ever written into outputs: Gradle archives (`isPreserveFileTimestamps = false`, reproducible file order), the host JAR rewrite (`PatchOkHttp`), `jdk23.jar` and the release ZIPs (`scripts/deterministic-zip.mjs`: sorted entries, UTC DOS time, no extra attributes). |
+| Timestamps | `SOURCE_DATE_EPOCH` (file in the tree, 2026-10-21T00:00:00Z) is the only time ever written into outputs: Gradle archives (`isPreserveFileTimestamps = false`, reproducible file order), the host JAR rewrite (`PatchOkHttp`) and the release ZIPs (`scripts/deterministic-zip.mjs`: sorted entries, UTC DOS time, no extra attributes). The linked module image is deterministic. |
 | Absolute build paths in WebAssembly | b-jvm is compiled with `-ffile-prefix-map` for the source and build trees; `build-vm.mjs` fails if a machine path survives. |
 | Build-machine paths in the WebUI and JS | `build-webui.mjs` fails on source maps or build paths in the output. |
 | Dependency drift | npm and pnpm lockfiles (`npm ci`, `--frozen-lockfile`); Gradle dependency verification (`jvm/gradle/verification-metadata.xml`) and a pinned wrapper; pinned upstream commits; checksummed Node, CMake, Ninja, JDK and Corretto archives; pinned Emscripten. |
@@ -25,7 +25,15 @@ docker/compare.sh ./out-1 ./out-2     # diff -r of both packages, per-file SHA-2
 `SOURCE_DATE_EPOCH` and the tool versions are part of the source tree, so a rebuild of a tagged release matches the published
 hashes.
 
-## Verification record
+## 0.3.6 verification evidence
+
+The 0.3.6 release includes a separate `REPRODUCIBILITY.md` and per-file manifests with the A/B/C comparison results and
+ZIP hashes. A/B use independently built no-cache pinned images and clean containers; C changes both the host checkout
+path and the container source/build/output paths. Each run executes the complete source-only build, not an output overlay.
+Compare extracted trees with `diff -r`, sorted per-file SHA-256 manifests with `cmp`, and deterministic ZIPs byte-for-byte
+with `docker/compare.sh`. `SHA256SUMS` beside the release identifies the package and reviewer source archive.
+
+## Verification record — historical 0.3.5
 
 All compared builds are identical: `diff -r` of the unpacked Firefox and Chrome packages shows no differences, the sorted per-file SHA-256 manifests are identical, and both ZIPs and `SHA256SUMS` are byte-for-byte equal.
 

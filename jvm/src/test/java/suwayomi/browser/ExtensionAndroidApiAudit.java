@@ -4,6 +4,7 @@ import com.googlecode.d2j.Method;
 import com.googlecode.d2j.node.DexFileNode;
 import com.googlecode.d2j.node.DexMethodNode;
 import com.googlecode.d2j.node.insn.DexStmtNode;
+import com.googlecode.d2j.node.insn.ConstStmtNode;
 import com.googlecode.d2j.node.insn.FieldStmtNode;
 import com.googlecode.d2j.node.insn.MethodStmtNode;
 import com.googlecode.d2j.node.insn.TypeStmtNode;
@@ -151,10 +152,16 @@ public final class ExtensionAndroidApiAudit {
             Set<Reference> references = new java.util.TreeSet<>();
             Set<FieldReference> fieldReferences = new java.util.TreeSet<>();
             Set<String> typeReferences = new java.util.TreeSet<>();
+            Set<String> resourceReferences = new java.util.TreeSet<>();
+            Set<Integer> frameworkIdCandidates = new java.util.TreeSet<>();
+            Set<String> frameworkIdCallsites = new java.util.TreeSet<>();
             for (var clazz : dex.clzs) {
                 addTypeDescriptor(typeReferences, clazz.superClass);
                 if (clazz.interfaceNames != null) for (String interfaceName : clazz.interfaceNames) addTypeDescriptor(typeReferences, interfaceName);
-                if (clazz.fields != null) for (var field : clazz.fields) addTypeDescriptor(typeReferences, field.field.getType());
+                if (clazz.fields != null) for (var field : clazz.fields) {
+                    addTypeDescriptor(typeReferences, field.field.getType());
+                    if (field.cst instanceof Integer value && (value >>> 24) == 1) frameworkIdCandidates.add(value);
+                }
                 if (clazz.methods == null) continue;
                 for (DexMethodNode method : clazz.methods) {
                     addMethodDescriptorTypes(typeReferences, method.method.getDesc());
@@ -162,20 +169,34 @@ public final class ExtensionAndroidApiAudit {
                     for (DexStmtNode statement : method.codeNode.stmts) {
                         if (statement instanceof MethodStmtNode invocation) {
                             Method target = invocation.method;
+                            if (target.getName().equals("getResources") || target.getName().equals("getIdentifier")
+                                || target.getName().equals("getAssets") || target.getOwner().startsWith("Landroid/content/res/"))
+                                resourceReferences.add(target.getOwner() + "." + target.getName() + target.getDesc());
                             if (isAndroidOwner(target.getOwner())) references.add(new Reference(target.getOwner(), target.getName(), target.getDesc()));
                             addMethodDescriptorTypes(typeReferences, target.getDesc());
                             addTypeDescriptor(typeReferences, target.getOwner());
                         } else if (statement instanceof FieldStmtNode access) {
                             var target = access.field;
+                            if (target.getOwner().startsWith("Landroid/R$") || target.getOwner().equals("Landroid/R;"))
+                                resourceReferences.add(target.toString());
                             if (isAndroidOwner(target.getOwner())) fieldReferences.add(new FieldReference(target.getOwner(), target.getName(), target.getType()));
                             addTypeDescriptor(typeReferences, target.getOwner());
                             addTypeDescriptor(typeReferences, target.getType());
                         } else if (statement instanceof TypeStmtNode type) addTypeDescriptor(typeReferences, type.type);
+                        else if (statement instanceof ConstStmtNode constant && constant.value instanceof Integer value && (value >>> 24) == 1) {
+                            frameworkIdCandidates.add(value);
+                            frameworkIdCallsites.add(String.format("0x%08x in %s", value, method.method));
+                        }
                     }
                 }
             }
 
             Map<String, List<Reference>> stubOwnerCalls = new TreeMap<>();
+            for (String descriptor : typeReferences) if (descriptor.startsWith("Landroid/R$")) resourceReferences.add(descriptor);
+            System.out.printf("  Framework resource calls/fields/types: %d; inlined framework-ID candidates: %d%n", resourceReferences.size(), frameworkIdCandidates.size());
+            for (String reference : resourceReferences) System.out.println("  FRAMEWORK-RESOURCE " + reference);
+            for (Integer value : frameworkIdCandidates) System.out.printf("  FRAMEWORK-ID-CANDIDATE 0x%08x%n", value);
+            for (String callsite : frameworkIdCallsites) System.out.println("  FRAMEWORK-ID-CALLSITE " + callsite);
             List<String> missing = new ArrayList<>();
             int resolved = 0;
             for (Reference reference : references) {

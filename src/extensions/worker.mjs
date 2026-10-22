@@ -110,6 +110,7 @@ self.onmessage = ({ data }) => {
       if (data.operation === 'smoke') result = await Host.smoke();
       else if (data.operation === 'string-echo') result = await Host.stringEcho(data.args.value);
       else if (data.operation === 'locale-data-smoke') result = await Host.localeDataProbe();
+      else if (data.operation === 'runtime-resources-probe') result = JSON.parse(await Host.runtimeResourceProbe());
       else if (data.operation === 'jvm-defaults') result = JSON.parse(await Host.jvmDefaultsProbe());
       else if (data.operation === 'date-failure-probe') result = await Host.dateFailureProbe(data.args.value);
       else if (data.operation === 'exception-handling-probe') result = await Host.exceptionHandlingProbe();

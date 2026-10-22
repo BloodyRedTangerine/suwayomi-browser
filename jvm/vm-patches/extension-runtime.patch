@@ -72,6 +72,129 @@ index 21fa702..e1695b9 100644
 -target_sources(natives PRIVATE ${out_file})
 \ No newline at end of file
 +target_sources(natives PRIVATE ${out_file})
+diff --git a/natives/share/com/squareup/zstd/Zstd.c b/natives/share/com/squareup/zstd/Zstd.c
+new file mode 100644
+index 0000000..e5ba6d4
+--- /dev/null
++++ b/natives/share/com/squareup/zstd/Zstd.c
+@@ -0,0 +1,117 @@
++/* Browser native adaptation of Square okio-zstd's ZstdKmp.cpp.
++ * Copyright (C) 2025 Square, Inc.
++ * Licensed under the Apache License, Version 2.0 (the "License");
++ * you may not use this file except in compliance with the License.
++ * You may obtain a copy of the License at
++ * https://www.apache.org/licenses/LICENSE-2.0
++ * Unless required by applicable law or agreed to in writing, software
++ * distributed under the License is distributed on an "AS IS" BASIS,
++ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
++ * See the License for the specific language governing permissions and
++ * limitations under the License.
++ * https://github.com/square/okio-zstd/tree/4fbdf35df030888d2a0cce4a84329d107438134f
++ * Uses the original Zstandard streaming codec, not a cache-format substitute.
++ */
++#include <natives-dsl.h>
++#include <zstd.h>
++
++static bool owned(void **contexts, void *context) {
++  for (int i = 0; i < arrlen(contexts); i++) if (contexts[i] == context) return true;
++  return false;
++}
++
++static bool bounds(vm_thread *thread, object array, s32 start, s32 end) {
++  if (!array || start < 0 || end < start || end > ArrayLength(array)) {
++    raise_vm_exception_no_msg(thread, STR("java/lang/IndexOutOfBoundsException"));
++    return false;
++  }
++  return true;
++}
++
++static stack_value code(size_t result) {
++  return (stack_value){.l = ZSTD_isError(result) ? (s64)(s32)result : (s64)result};
++}
++
++DECLARE_NATIVE("com/squareup/zstd", JniZstdKt, createJniZstd, "()J") {
++  // Original JNI caches four Java field IDs. This VM resolves them by name,
++  // so its equivalent metadata token is immutable and requires no allocation.
++  return (stack_value){.l = 1};
++}
++
++DECLARE_NATIVE("com/squareup/zstd", JniZstdKt, jniGetErrorName, "(J)Ljava/lang/String;") {
++  size_t result = (size_t)args[0].l;
++  return (stack_value){.obj = ZSTD_isError(result) ? MakeJStringFromUTF8(thread, ZSTD_getErrorName(result)) : nullptr};
++}
++
++DECLARE_NATIVE("com/squareup/zstd", JniZstdKt, createZstdCompressor, "()J") {
++  void *context = ZSTD_createCCtx();
++  if (context) arrput(thread->vm->zstd_compressors, context);
++  return (stack_value){.l = (s64)(uintptr_t)context};
++}
++
++DECLARE_NATIVE("com/squareup/zstd", JniZstdKt, createZstdDecompressor, "()J") {
++  void *context = ZSTD_createDCtx();
++  if (context) arrput(thread->vm->zstd_decompressors, context);
++  return (stack_value){.l = (s64)(uintptr_t)context};
++}
++
++DECLARE_NATIVE("com/squareup/zstd", JniZstdCompressor, setParameter, "(JII)J") {
++  void *context = (void *)(uintptr_t)args[0].l;
++  if (!owned(thread->vm->zstd_compressors, context)) {
++    raise_vm_exception_no_msg(thread, STR("java/lang/IllegalStateException"));
++    return value_null();
++  }
++  return code(ZSTD_CCtx_setParameter(context, args[1].i, args[2].i));
++}
++
++DECLARE_NATIVE("com/squareup/zstd", JniZstdCompressor, compressStream2, "(JJ[BII[BIII)J") {
++  void *context = (void *)(uintptr_t)args[1].l;
++  if (args[0].l != 1 || !owned(thread->vm->zstd_compressors, context)) {
++    raise_vm_exception_no_msg(thread, STR("java/lang/IllegalStateException"));
++    return value_null();
++  }
++  object output = args[2].handle->obj, input = args[5].handle->obj;
++  if (args[8].i < ZSTD_e_continue || args[8].i > ZSTD_e_end) {
++    raise_vm_exception_no_msg(thread, STR("java/lang/IllegalArgumentException"));
++    return value_null();
++  }
++  if (!bounds(thread, output, args[4].i, args[3].i) || !bounds(thread, input, args[7].i, args[6].i)) return value_null();
++  ZSTD_inBuffer source = {ArrayData(input), args[6].i, args[7].i};
++  ZSTD_outBuffer target = {ArrayData(output), args[3].i, args[4].i};
++  size_t result = ZSTD_compressStream2(context, &target, &source, args[8].i);
++  StoreFieldInt(obj->obj, "outputBytesProcessed", (s32)target.pos - args[4].i);
++  StoreFieldInt(obj->obj, "inputBytesProcessed", (s32)source.pos - args[7].i);
++  return code(result);
++}
++
++DECLARE_NATIVE("com/squareup/zstd", JniZstdDecompressor, decompressStream, "(JJ[BII[BII)J") {
++  void *context = (void *)(uintptr_t)args[1].l;
++  if (args[0].l != 1 || !owned(thread->vm->zstd_decompressors, context)) {
++    raise_vm_exception_no_msg(thread, STR("java/lang/IllegalStateException"));
++    return value_null();
++  }
++  object output = args[2].handle->obj, input = args[5].handle->obj;
++  if (!bounds(thread, output, args[4].i, args[3].i) || !bounds(thread, input, args[7].i, args[6].i)) return value_null();
++  ZSTD_inBuffer source = {ArrayData(input), args[6].i, args[7].i};
++  ZSTD_outBuffer target = {ArrayData(output), args[3].i, args[4].i};
++  size_t result = ZSTD_decompressStream(context, &target, &source);
++  StoreFieldInt(obj->obj, "outputBytesProcessed", (s32)target.pos - args[4].i);
++  StoreFieldInt(obj->obj, "inputBytesProcessed", (s32)source.pos - args[7].i);
++  return code(result);
++}
++
++DECLARE_NATIVE("com/squareup/zstd", JniZstdCompressor, close, "(J)V") {
++  void *context = (void *)(uintptr_t)args[0].l;
++  for (int i = 0; i < arrlen(thread->vm->zstd_compressors); i++) if (thread->vm->zstd_compressors[i] == context) {
++    ZSTD_freeCCtx(context); arrdelswap(thread->vm->zstd_compressors, i); break;
++  }
++  return value_null();
++}
++
++DECLARE_NATIVE("com/squareup/zstd", JniZstdDecompressor, close, "(J)V") {
++  void *context = (void *)(uintptr_t)args[0].l;
++  for (int i = 0; i < arrlen(thread->vm->zstd_decompressors); i++) if (thread->vm->zstd_decompressors[i] == context) {
++    ZSTD_freeDCtx(context); arrdelswap(thread->vm->zstd_decompressors, i); break;
++  }
++  return value_null();
++}
 diff --git a/natives/share/java/io/FileDescriptor.c b/natives/share/java/io/FileDescriptor.c
 index 159fc04..2e977ff 100644
 --- a/natives/share/java/io/FileDescriptor.c
@@ -777,6 +900,28 @@ index f596189..c198396 100644
 +on_oom:
 +  return value_null();
 +}
+diff --git a/natives/share/java/io/descriptor-access.h b/natives/share/java/io/descriptor-access.h
+new file mode 100644
+index 0000000..5745d7c
+--- /dev/null
++++ b/natives/share/java/io/descriptor-access.h
+@@ -0,0 +1,16 @@
++#ifndef BJVM_DESCRIPTOR_ACCESS_H
++#define BJVM_DESCRIPTOR_ACCESS_H
++#include <errno.h>
++#include <fcntl.h>
++
++// WasmFS does not consistently reject operations through descriptors opened
++// in the opposite access mode. Check at the Java I/O boundary, not file mode
++// bits: chmod does not change the access rights of an already-open descriptor.
++static inline bool jvm_descriptor_access(int fd, bool writing) {
++  int flags = fcntl(fd, F_GETFL);
++  if (flags < 0) return false;
++  int access = flags & O_ACCMODE;
++  if (writing ? access == O_RDONLY : access == O_WRONLY) { errno = EBADF; return false; }
++  return true;
++}
++#endif
 diff --git a/natives/share/java/lang/Class.c b/natives/share/java/lang/Class.c
 index 2b0a638..24faab7 100644
 --- a/natives/share/java/lang/Class.c
@@ -875,6 +1020,105 @@ index 9c94500..77979d8 100644
  
  DECLARE_ASYNC_NATIVE("java/lang/ref", Reference, waitForReferencePendingList, "()V",
                       locals(rr_wakeup_info wakeup_info;), invoked_methods()) {
+diff --git a/natives/share/java/util/zip/Deflater.c b/natives/share/java/util/zip/Deflater.c
+new file mode 100644
+index 0000000..4000e02
+--- /dev/null
++++ b/natives/share/java/util/zip/Deflater.c
+@@ -0,0 +1,93 @@
++// Suwayomi browser port: JDK Deflater natives backed by Emscripten's zlib.
++// Same MIT license as b-jvm. JDK's packed result encodes read/written counts.
++#include <natives-dsl.h>
++#include <zlib.h>
++
++DECLARE_NATIVE("java/util/zip", Deflater, init, "(IIZ)J") {
++  z_stream *stream = calloc(1, sizeof(*stream));
++  if (!stream) {
++    raise_vm_exception_no_msg(thread, STR("java/lang/OutOfMemoryError"));
++    return value_null();
++  }
++  int status = deflateInit2(stream, args[0].i, Z_DEFLATED, args[2].i ? -MAX_WBITS : MAX_WBITS, 8, args[1].i);
++  if (status != Z_OK) {
++    free(stream);
++    raise_vm_exception_no_msg(thread, STR("java/lang/IllegalArgumentException"));
++    return value_null();
++  }
++  arrput(thread->vm->deflater_streams, stream);
++  return (stack_value){.l = (intptr_t)stream};
++}
++
++static stack_value compress_bytes(vm_thread *thread, z_stream *stream, u8 *input, int input_size,
++                                  u8 *output, int output_size, int flush, int params) {
++  stream->next_in = input;
++  stream->avail_in = input_size;
++  stream->next_out = output;
++  stream->avail_out = output_size;
++  int changing = params & 1;
++  int status = changing ? deflateParams(stream, params >> 3, (params >> 1) & 3) : deflate(stream, flush);
++  if (status != Z_OK && status != Z_STREAM_END && status != Z_BUF_ERROR) {
++    raise_vm_exception_no_msg(thread, STR("java/lang/InternalError"));
++    return value_null();
++  }
++  u64 read = input_size - stream->avail_in;
++  u64 written = output_size - stream->avail_out;
++  u64 completed = status == Z_STREAM_END;
++  u64 retry = changing && status != Z_OK;
++  return (stack_value){.l = (s64)(read | (written << 31) | (completed << 62) | (retry << 63))};
++}
++
++DECLARE_NATIVE("java/util/zip", Deflater, deflateBytesBytes, "(J[BII[BIIII)J") {
++  return compress_bytes(thread, (z_stream *)(intptr_t)args[0].l,
++    (u8 *)ArrayData(args[1].handle->obj) + args[2].i, args[3].i,
++    (u8 *)ArrayData(args[4].handle->obj) + args[5].i, args[6].i, args[7].i, args[8].i);
++}
++
++DECLARE_NATIVE("java/util/zip", Deflater, deflateBytesBuffer, "(J[BIIJIII)J") {
++  return compress_bytes(thread, (z_stream *)(intptr_t)args[0].l,
++    (u8 *)ArrayData(args[1].handle->obj) + args[2].i, args[3].i,
++    (u8 *)(intptr_t)args[4].l, args[5].i, args[6].i, args[7].i);
++}
++
++DECLARE_NATIVE("java/util/zip", Deflater, deflateBufferBytes, "(JJI[BIIII)J") {
++  return compress_bytes(thread, (z_stream *)(intptr_t)args[0].l,
++    (u8 *)(intptr_t)args[1].l, args[2].i,
++    (u8 *)ArrayData(args[3].handle->obj) + args[4].i, args[5].i, args[6].i, args[7].i);
++}
++
++DECLARE_NATIVE("java/util/zip", Deflater, deflateBufferBuffer, "(JJIJIII)J") {
++  return compress_bytes(thread, (z_stream *)(intptr_t)args[0].l,
++    (u8 *)(intptr_t)args[1].l, args[2].i, (u8 *)(intptr_t)args[3].l, args[4].i, args[5].i, args[6].i);
++}
++
++DECLARE_NATIVE("java/util/zip", Deflater, setDictionary, "(J[BII)V") {
++  int status = deflateSetDictionary((z_stream *)(intptr_t)args[0].l, (u8 *)ArrayData(args[1].handle->obj) + args[2].i, args[3].i);
++  if (status != Z_OK) raise_vm_exception_no_msg(thread, STR("java/lang/IllegalArgumentException"));
++  return value_null();
++}
++
++DECLARE_NATIVE("java/util/zip", Deflater, setDictionaryBuffer, "(JJI)V") {
++  int status = deflateSetDictionary((z_stream *)(intptr_t)args[0].l, (u8 *)(intptr_t)args[1].l, args[2].i);
++  if (status != Z_OK) raise_vm_exception_no_msg(thread, STR("java/lang/IllegalArgumentException"));
++  return value_null();
++}
++
++DECLARE_NATIVE("java/util/zip", Deflater, getAdler, "(J)I") {
++  return (stack_value){.i = ((z_stream *)(intptr_t)args[0].l)->adler};
++}
++
++DECLARE_NATIVE("java/util/zip", Deflater, reset, "(J)V") {
++  deflateReset((z_stream *)(intptr_t)args[0].l);
++  return value_null();
++}
++
++DECLARE_NATIVE("java/util/zip", Deflater, end, "(J)V") {
++  z_stream *stream = (z_stream *)(intptr_t)args[0].l;
++  deflateEnd(stream);
++  for (int i = 0; i < arrlen(thread->vm->deflater_streams); ++i) {
++    if (thread->vm->deflater_streams[i] == stream) { arrdelswap(thread->vm->deflater_streams, i); break; }
++  }
++  free(stream);
++  return value_null();
++}
 diff --git a/natives/share/java/util/zip/Inflater.c b/natives/share/java/util/zip/Inflater.c
 index a4e9f0b..c4e28b0 100644
 --- a/natives/share/java/util/zip/Inflater.c
@@ -1070,6 +1314,78 @@ index 7a49801..04e6dc2 100644
 -}
 \ No newline at end of file
 +}
+diff --git a/natives/share/jdk/internal/util/SystemProps.c b/natives/share/jdk/internal/util/SystemProps.c
+index bad861c..b98f808 100644
+--- a/natives/share/jdk/internal/util/SystemProps.c
++++ b/natives/share/jdk/internal/util/SystemProps.c
+@@ -110,7 +110,7 @@ DECLARE_NATIVE("jdk/internal/util", SystemProps_Raw, platformProperties, "()[Lja
+   SET_PROP(_socksProxyPort_NDX, "");
+   SET_PROP(_user_dir_NDX, cwd.chars);
+   SET_PROP(_user_name_NDX, "user");
+-  SET_PROP(_user_home_NDX, "/home/user");
++  SET_PROP(_user_home_NDX, "/user");
+ 
+   stack_value result = (stack_value){.obj = props->obj};
+   drop_handle(thread, props);
+diff --git a/natives/share/sun/nio/ch/UnixFileDispatcherImpl.c b/natives/share/sun/nio/ch/UnixFileDispatcherImpl.c
+new file mode 100644
+index 0000000..9557c2a
+--- /dev/null
++++ b/natives/share/sun/nio/ch/UnixFileDispatcherImpl.c
+@@ -0,0 +1,53 @@
++#include <natives-dsl.h>
++#include <errno.h>
++#include <stdint.h>
++#include <unistd.h>
++#include <sys/stat.h>
++#include "../../../java/io/descriptor-access.h"
++
++// FileChannel addresses point into the VM's native (WASM linear) memory.
++static s64 io_result(vm_thread *thread, ssize_t count, bool reading, int requested) {
++  if (count >= 0) return reading && count == 0 && requested != 0 ? -1 : count;
++  if (errno == EAGAIN) return -2;
++  if (errno == EINTR) return -3;
++  raise_vm_exception(thread, STR("java/io/IOException"), STR("Browser filesystem I/O failed"));
++  return -1;
++}
++
++DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, read0, "(Ljava/io/FileDescriptor;JI)I") {
++  int fd = LoadFieldInt(args[0].handle->obj, "fd");
++  ssize_t count = jvm_descriptor_access(fd, false) ? read(fd, (void *)(uintptr_t)args[1].l, args[2].i) : -1;
++  return (stack_value){.i = io_result(thread, count, true, args[2].i)};
++}
++DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, pread0, "(Ljava/io/FileDescriptor;JIJ)I") {
++  int fd = LoadFieldInt(args[0].handle->obj, "fd");
++  ssize_t count = jvm_descriptor_access(fd, false) ? pread(fd, (void *)(uintptr_t)args[1].l, args[2].i, args[3].l) : -1;
++  return (stack_value){.i = io_result(thread, count, true, args[2].i)};
++}
++DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, write0, "(Ljava/io/FileDescriptor;JI)I") {
++  int fd = LoadFieldInt(args[0].handle->obj, "fd");
++  ssize_t count = jvm_descriptor_access(fd, true) ? write(fd, (const void *)(uintptr_t)args[1].l, args[2].i) : -1;
++  return (stack_value){.i = io_result(thread, count, false, args[2].i)};
++}
++DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, pwrite0, "(Ljava/io/FileDescriptor;JIJ)I") {
++  int fd = LoadFieldInt(args[0].handle->obj, "fd");
++  ssize_t count = jvm_descriptor_access(fd, true) ? pwrite(fd, (const void *)(uintptr_t)args[1].l, args[2].i, args[3].l) : -1;
++  return (stack_value){.i = io_result(thread, count, false, args[2].i)};
++}
++DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, seek0, "(Ljava/io/FileDescriptor;J)J") {
++  int fd = LoadFieldInt(args[0].handle->obj, "fd");
++  off_t position = lseek(fd, args[1].l < 0 ? 0 : args[1].l, args[1].l < 0 ? SEEK_CUR : SEEK_SET);
++  if (position < 0) raise_vm_exception(thread, STR("java/io/IOException"), STR("Could not seek browser file"));
++  return (stack_value){.l = position};
++}
++DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, truncate0, "(Ljava/io/FileDescriptor;J)I") {
++  int fd = LoadFieldInt(args[0].handle->obj, "fd");
++  return (stack_value){.i = io_result(thread, jvm_descriptor_access(fd, true) ? ftruncate(fd, args[1].l) : -1, false, 0)};
++}
++DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, force0, "(Ljava/io/FileDescriptor;Z)I") {
++  return (stack_value){.i = io_result(thread, fsync(LoadFieldInt(args[0].handle->obj, "fd")), false, 0)};
++}
++DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, closeIntFD, "(I)V") {
++  if (close(args[0].i) != 0) raise_vm_exception(thread, STR("java/io/IOException"), STR("Could not close browser file"));
++  return value_null();
++}
 diff --git a/natives/share/sun/nio/fs/UnixNativeDispatcher.c b/natives/share/sun/nio/fs/UnixNativeDispatcher.c
 index 091e88e..b5a17ec 100644
 --- a/natives/share/sun/nio/fs/UnixNativeDispatcher.c
@@ -1182,6 +1498,120 @@ index 091e88e..b5a17ec 100644
 -DECLARE_NATIVE("sun/nio/ch", FileDispatcherImpl, init0, "()V") { return value_null(); }
 \ No newline at end of file
 +DECLARE_NATIVE("sun/nio/ch", FileDispatcherImpl, init0, "()V") { return value_null(); }
+diff --git a/test/classpath-tests.cc b/test/classpath-tests.cc
+index 9822cfe..5828685 100644
+--- a/test/classpath-tests.cc
++++ b/test/classpath-tests.cc
+@@ -1,5 +1,12 @@
+ #include "doctest/doctest.h"
+ #include <classpath.h>
++#include <algorithm>
++#include <cstring>
++#include <filesystem>
++#include <fstream>
++#include <vector>
++#include <unistd.h>
++#include <zlib.h>
+ 
+ TEST_SUITE_BEGIN("[classpath]");
+ 
+@@ -55,4 +62,94 @@ TEST_CASE("Folder in classpath") {
+   free_classpath(&cp);
+ }
+ 
+-TEST_SUITE_END;
+\ No newline at end of file
++static void image_le(std::vector<u8> &out, u64 value, unsigned size) {
++  for (unsigned i = 0; i < size; i++) out.push_back((value >> (8 * i)) & 255);
++}
++
++static std::vector<u8> make_image(bool compressed) {
++  std::vector<u8> strings{0}, location{0}, resource;
++  auto string = [&](const char *value) { u32 at = strings.size(); do { strings.push_back(*value); } while (*value++); return at; };
++  u32 module = string("java.base"), parent = string("fixture"), base = string("Example"), extension = string("class"), zip = string("zip");
++  const std::vector<u8> contents{0xca, 0xfe, 0xba, 0xbe, 1, 2, 3, 4};
++  if (compressed) {
++    std::vector<u8> packed(compressBound(contents.size())); uLongf size = packed.size();
++    REQUIRE(compress2(packed.data(), &size, contents.data(), contents.size(), 6) == Z_OK);
++    packed.resize(size);
++    image_le(resource, 0xcafefafa, 4); image_le(resource, size, 8); image_le(resource, contents.size(), 8);
++    image_le(resource, zip, 4); image_le(resource, 0xffffffff, 4); image_le(resource, 1, 1);
++    resource.insert(resource.end(), packed.begin(), packed.end());
++  } else resource = contents;
++  auto attribute = [&](unsigned kind, u64 value) {
++    unsigned length = 1; while (length < 8 && (value >> (length * 8))) length++;
++    location.push_back((kind << 3) | (length - 1));
++    for (unsigned i = length; i > 0; i--) location.push_back((value >> ((i - 1) * 8)) & 255);
++  };
++  attribute(1, module); attribute(2, parent); attribute(3, base); attribute(4, extension); attribute(5, 0);
++  if (compressed) attribute(6, resource.size());
++  attribute(7, contents.size()); location.push_back(0);
++  std::vector<u8> image;
++  for (u32 value : {0xcafedadaU, 0x10000U, 0U, 1U, 1U, (u32)location.size(), (u32)strings.size(), 0U, 1U}) image_le(image, value, 4);
++  image.insert(image.end(), location.begin(), location.end());
++  image.insert(image.end(), strings.begin(), strings.end());
++  image.insert(image.end(), resource.begin(), resource.end());
++  return image;
++}
++
++static std::filesystem::path write_image(const std::vector<u8> &bytes) {
++  static unsigned count = 0;
++  auto file = std::filesystem::temp_directory_path() / ("bovine-image-" + std::to_string(getpid()) + "-" + std::to_string(++count) + ".jimage");
++  std::ofstream output(file, std::ios::binary);
++  output.write((const char *)bytes.data(), bytes.size()); output.close();
++  return file;
++}
++
++TEST_CASE("JIMAGE stored and ZIP resources") {
++  for (bool compressed : {false, true}) {
++    auto file = write_image(make_image(compressed)); auto path = file.string();
++    classpath cp; char *error = init_classpath(&cp, (slice){path.data(), (u32)path.size()});
++    REQUIRE(error == nullptr);
++    u8 *bytes = nullptr; size_t length = 0;
++    REQUIRE(lookup_classpath(&cp, STR("fixture/Example.class"), &bytes, &length) == 0);
++    REQUIRE(length == 8); REQUIRE(bytes[0] == 0xca); REQUIRE(bytes[7] == 4); free(bytes);
++    REQUIRE(lookup_classpath(&cp, STR("missing.class"), &bytes, &length) == -1);
++    free_classpath(&cp); std::filesystem::remove(file);
++  }
++}
++
++TEST_CASE("JIMAGE malformed indexes reject before resource lookup") {
++  for (unsigned mutation = 0; mutation < 4; mutation++) {
++    auto bytes = make_image(false);
++    if (mutation == 0) bytes.resize(20);
++    if (mutation == 1) bytes[0] ^= 1;
++    if (mutation == 2) std::fill(bytes.begin() + 20, bytes.begin() + 24, 255);
++    if (mutation == 3) bytes[37] = 0xf8;
++    auto file = write_image(bytes); auto path = file.string(); classpath cp;
++    char *error = init_classpath(&cp, (slice){path.data(), (u32)path.size()});
++    REQUIRE(error != nullptr); free(error); free_classpath(&cp); std::filesystem::remove(file);
++  }
++}
++
++TEST_CASE("JIMAGE corrupt ZIP and unsupported decompressor reject") {
++  for (unsigned mutation = 0; mutation < 2; mutation++) {
++    auto image = make_image(true);
++    if (mutation == 0) image.back() ^= 255;
++    else { const std::vector<u8> zip{'z','i','p',0}; auto at = std::search(image.begin(), image.end(), zip.begin(), zip.end()); REQUIRE(at != image.end()); *at = 'x'; }
++    auto file = write_image(image); auto path = file.string(); classpath cp;
++    char *error = init_classpath(&cp, (slice){path.data(), (u32)path.size()}); REQUIRE(error == nullptr);
++    u8 *bytes = nullptr; size_t length = 0;
++    REQUIRE(lookup_classpath(&cp, STR("fixture/Example.class"), &bytes, &length) == -1);
++    REQUIRE(bytes == nullptr); free_classpath(&cp); std::filesystem::remove(file);
++  }
++}
++
++TEST_CASE("JIMAGE pinned linked JDK classes") {
++  const char *path = std::getenv("BROWSER_JIMAGE_TEST"); if (!path) return;
++  classpath cp; char *error = init_classpath(&cp, (slice){const_cast<char *>(path), (u32)strlen(path)}); REQUIRE(error == nullptr);
++  for (slice name : {STR("java/lang/Object.class"), STR("sun/text/resources/cldr/ext/FormatData_es.class")}) {
++    u8 *bytes = nullptr; size_t length = 0; REQUIRE(lookup_classpath(&cp, name, &bytes, &length) == 0);
++    REQUIRE(length > 4); REQUIRE(bytes[0] == 0xca); REQUIRE(bytes[1] == 0xfe); free(bytes);
++  }
++  free_classpath(&cp);
++}
++
++TEST_SUITE_END;
 diff --git a/vm/CMakeLists.txt b/vm/CMakeLists.txt
 index c590d00..ccff300 100644
 --- a/vm/CMakeLists.txt
@@ -1274,7 +1704,7 @@ index 5925aaa..eeb8e06 100644
 \ No newline at end of file
 +int main() {}
 diff --git a/vm/bjvm.c b/vm/bjvm.c
-index 064d6a1..6b2208c 100644
+index 064d6a1..65e4363 100644
 --- a/vm/bjvm.c
 +++ b/vm/bjvm.c
 @@ -7,6 +7,7 @@
@@ -1336,7 +1766,20 @@ index 064d6a1..6b2208c 100644
  
    return 0;
  }
-@@ -579,6 +601,26 @@ module *get_module(vm *vm, slice module_name) {
+@@ -521,7 +543,12 @@ static slice get_default_boot_cp() {
+   }
+ #endif
+ 
++#ifdef EMSCRIPTEN
++  // Share the linked JDK image with Java's jrt:/ resource implementation.
++  return STR("./jdk23/lib/modules");
++#else
+   return STR("./jdk23.jar");
++#endif
+ }
+ 
+ vm_options default_vm_options() {
+@@ -579,6 +606,26 @@ module *get_module(vm *vm, slice module_name) {
    return hash_table_lookup(&vm->modules, module_name.chars, (int)module_name.len);
  }
  
@@ -1363,7 +1806,7 @@ index 064d6a1..6b2208c 100644
  vm *create_vm(const vm_options options) {
    vm *vm = calloc(1, sizeof(*vm));
  
-@@ -598,6 +640,7 @@ vm *create_vm(const vm_options options) {
+@@ -598,6 +645,7 @@ vm *create_vm(const vm_options options) {
    vm->interned_strings = make_hash_table(nullptr, 0.75, 16);
    vm->class_padding = make_hash_table(nullptr, 0.75, 16);
    vm->modules = make_hash_table(free, 0.75, 16);
@@ -1371,7 +1814,7 @@ index 064d6a1..6b2208c 100644
    vm->main_thread_group = nullptr;
  
    vm->heap = aligned_alloc(4096, options.heap_size);
-@@ -660,6 +703,15 @@ void free_zstreams(vm *vm) {
+@@ -660,6 +708,15 @@ void free_zstreams(vm *vm) {
      free(vm->z_streams[i]);
    }
    arrfree(vm->z_streams);
@@ -1387,7 +1830,7 @@ index 064d6a1..6b2208c 100644
  }
  
  void free_vm(vm *vm) {
-@@ -668,6 +720,7 @@ void free_vm(vm *vm) {
+@@ -668,6 +725,7 @@ void free_vm(vm *vm) {
    free_hash_table(vm->interned_strings);
    free_hash_table(vm->class_padding);
    free_hash_table(vm->modules);
@@ -1395,7 +1838,7 @@ index 064d6a1..6b2208c 100644
  
    if (vm->primitive_classes[0]) {
      for (int i = 0; i < 9; ++i) {
-@@ -842,6 +895,11 @@ vm_thread *create_main_thread(vm *vm, thread_options options) {
+@@ -842,6 +900,11 @@ vm_thread *create_main_thread(vm *vm, thread_options options) {
        thr, make_thread,
        (stack_value[]){{.obj = (void *)java_thr}, {.obj = main_thread_group}, {.obj = java_thr->name}});
  
@@ -1407,7 +1850,7 @@ index 064d6a1..6b2208c 100644
  #undef java_thr
    drop_handle(thr, java_thread);
  
-@@ -1437,7 +1495,10 @@ classdesc *define_class(vm_thread *thread, classloader *cl, slice chars, const u
+@@ -1437,7 +1500,10 @@ classdesc *define_class(vm_thread *thread, classloader *cl, slice chars, const u
    class->self->classdesc = class;
  
    if (is_builtin_class(chars)) {
@@ -1419,7 +1862,7 @@ index 064d6a1..6b2208c 100644
    } else {
      class->module = get_unnamed_module(thread);
    }
-@@ -1730,7 +1791,7 @@ DEFINE_ASYNC(initialize_class) {
+@@ -1730,7 +1796,7 @@ DEFINE_ASYNC(initialize_class) {
                // awaits
  
    DCHECK(cd);
@@ -1428,7 +1871,7 @@ index 064d6a1..6b2208c 100644
      // Class is already initialized
      ASYNC_RETURN(0);
    }
-@@ -1758,6 +1819,10 @@ DEFINE_ASYNC(initialize_class) {
+@@ -1758,6 +1824,10 @@ DEFINE_ASYNC(initialize_class) {
        cd = args->classdesc; // reload!
      }
  
@@ -1439,7 +1882,7 @@ index 064d6a1..6b2208c 100644
      ASYNC_RETURN(0); // the class is done
    }
  
-@@ -1805,8 +1870,9 @@ DEFINE_ASYNC(initialize_class) {
+@@ -1805,8 +1875,9 @@ DEFINE_ASYNC(initialize_class) {
    if (clinit) {
  
      AWAIT(call_interpreter, thread, clinit, nullptr);
@@ -1451,7 +1894,7 @@ index 064d6a1..6b2208c 100644
        goto done;
      }
    }
-@@ -2690,4 +2756,4 @@ bool thread_is_daemon(vm_thread *thread) {
+@@ -2690,4 +2761,4 @@ bool thread_is_daemon(vm_thread *thread) {
    // The daemon field is stored in the "holder" of the Java Thread object.
    object holder = thread_obj->holder;
    return LoadFieldBoolean(holder, "daemon");
@@ -1526,6 +1969,172 @@ index fe02291..28d1337 100644
  } classdesc;
  
  heap_string insn_to_string(const bytecode_insn *insn, int insn_index);
+diff --git a/vm/classpath.c b/vm/classpath.c
+index ae4cfa0..4cc7d09 100644
+--- a/vm/classpath.c
++++ b/vm/classpath.c
+@@ -212,13 +212,87 @@ inval:
+   return strdup(s);
+ }
+ 
+-static char *add_classpath_jar(classpath *cp, slice entry) {
++// JIMAGE v1 (little-endian, as emitted by the pinned Linux x86_64 jlink).
++// Index the same module image used by the Java jrt filesystem, avoiding a
++// second archive containing every JDK class. Modules remain visible to Java;
++// only the bootstrap class lookup uses a flattened name, as the old JAR did.
++static u32 image_u32(const char *p) { u32 value; memcpy(&value, p, sizeof(value)); return value; }
++static u64 image_u64(const char *p) { u64 value; memcpy(&value, p, sizeof(value)); return value; }
++static const char *image_string(mapped_jar *image, u64 offset) {
++  if (offset >= image->image_strings_size) return nullptr;
++  const char *value = image->image_strings + offset;
++  return memchr(value, 0, image->image_strings_size - offset) ? value : nullptr;
++}
++
++static char *load_filesystem_jimage(const char *filename, mapped_jar *image) {
++  char *error = map_jar(filename, image);
++  if (error) return error;
++  if (image->size_bytes < 28 || image_u32(image->data) != 0xcafedada || image_u32(image->data + 4) != 0x10000)
++    return strdup("Invalid JIMAGE header or version");
++  u32 count = image_u32(image->data + 12), table_size = image_u32(image->data + 16);
++  u32 locations_size = image_u32(image->data + 20), strings_size = image_u32(image->data + 24);
++  u64 locations = 28ULL + 8ULL * table_size, strings = locations + locations_size;
++  u64 resources = strings + strings_size;
++  if (!table_size || count > table_size || resources > image->size_bytes)
++    return strdup("Invalid JIMAGE index bounds");
++  image->is_jimage = true;
++  image->image_strings = image->data + strings;
++  image->image_strings_size = strings_size;
++  hash_table_reserve(&image->entries, count);
++  for (u32 i = 0; i < table_size; i++) {
++    u32 location = image_u32(image->data + 28ULL + 4ULL * table_size + 4ULL * i);
++    if (!location) continue;
++    if (location >= locations_size) return strdup("JIMAGE location out of bounds");
++    u64 values[8] = {0};
++    unsigned mask = 0;
++    u64 cursor = locations + location;
++    while (true) {
++      if (cursor >= strings) return strdup("Unterminated JIMAGE location");
++      u8 head = (u8)image->data[cursor++];
++      if (!head) break;
++      unsigned kind = head >> 3, length = (head & 7) + 1;
++      if (kind == 0 || kind > 7 || (mask & (1U << kind)) || cursor + length > strings)
++        return strdup("Invalid JIMAGE location attribute");
++      mask |= 1U << kind;
++      for (unsigned j = 0; j < length; j++) values[kind] = (values[kind] << 8) | (u8)image->data[cursor++];
++    }
++    // Pseudo /modules and /packages directory nodes are not class resources.
++    if (!values[1]) continue;
++    const char *module = image_string(image, values[1]);
++    const char *parent = image_string(image, values[2]);
++    const char *base = image_string(image, values[3]);
++    const char *extension = image_string(image, values[4]);
++    if (!module || !*module || !parent || !base || !*base || !extension)
++      return strdup("Invalid JIMAGE resource name");
++    size_t name_length = strlen(parent) + strlen(base) + strlen(extension) + 3;
++    if (name_length > 65536) return strdup("JIMAGE resource name too long");
++    char *name = malloc(name_length);
++    snprintf(name, name_length, "%s%s%s%s%s", parent, *parent ? "/" : "", base, *extension ? "." : "", extension);
++    if (!strcmp(name, "module-info.class")) { free(name); continue; }
++    u64 stored_size = values[6] ? values[6] : values[7];
++    if (values[7] > 64ULL * 1024 * 1024 || values[5] > image->size_bytes - resources ||
++        stored_size > image->size_bytes - resources - values[5]) {
++      free(name); return strdup("JIMAGE resource bounds invalid");
++    }
++    jar_entry *entry = calloc(1, sizeof(jar_entry));
++    entry->header = image->data + resources + values[5];
++    entry->compressed_size = (u32)stored_size;
++    entry->claimed_uncompressed_size = (u32)values[7];
++    entry->is_compressed = values[6] != 0;
++    void *old = hash_table_insert(&image->entries, name, strlen(name), entry);
++    free(name);
++    if (old) { free(old); return strdup("Duplicate flattened JIMAGE resource"); }
++  }
++  return nullptr;
++}
++
++static char *add_classpath_archive(classpath *cp, slice entry, bool is_jimage) {
+   mapped_jar *jar = calloc(1, sizeof(mapped_jar));
+   jar->entries = make_hash_table(free, 0.75, 1);
+ 
+   char *filename = calloc(1, entry.len + 1);
+   memcpy(filename, entry.chars, entry.len);
+-  char *error = load_filesystem_jar(filename, jar);
++  char *error = is_jimage ? load_filesystem_jimage(filename, jar) : load_filesystem_jar(filename, jar);
+   free(filename);
+ 
+   if (error) {
+@@ -236,8 +310,11 @@ static char *add_classpath_jar(classpath *cp, slice entry) {
+ static char *add_classpath_entry(classpath *cp, slice entry) {
+   // If entry ends in .jar, load it as a JAR, otherwise treat it as a folder
+   if (entry.len >= 4 && memcmp(entry.chars + entry.len - 4, ".jar", 4) == 0) {
+-    return add_classpath_jar(cp, entry);
++    return add_classpath_archive(cp, entry, false);
+   }
++  if ((entry.len >= 8 && memcmp(entry.chars + entry.len - 8, "/modules", 8) == 0) ||
++      (entry.len >= 7 && memcmp(entry.chars + entry.len - 7, ".jimage", 7) == 0))
++    return add_classpath_archive(cp, entry, true);
+   classpath_entry ent = (classpath_entry){.name = make_heap_str_from(entry), .jar = nullptr};
+   arrput(cp->entries, ent);
+   return nullptr;
+@@ -277,8 +354,37 @@ void free_classpath(classpath *cp) {
+ 
+ enum jar_lookup_result { NOT_FOUND, FOUND, CORRUPT /* e.g. if INFLATE fails */ };
+ 
++static enum jar_lookup_result jimage_lookup(mapped_jar *image, slice filename, u8 **bytes, size_t *len) {
++  jar_entry *entry = hash_table_lookup(&image->entries, filename.chars, filename.len);
++  if (!entry) return NOT_FOUND;
++  const char *data = entry->header;
++  if (!entry->is_compressed) {
++    *bytes = malloc(entry->claimed_uncompressed_size ? entry->claimed_uncompressed_size : 1);
++    memcpy(*bytes, data, *len = entry->claimed_uncompressed_size);
++    return FOUND;
++  }
++  // jlink --compress=zip-N uses one terminal ZIP decompressor and a zlib
++  // stream following the 29-byte CompressedResourceHeader. Reject any other
++  // chain rather than treating unknown compressed data as class bytecode.
++  if (entry->compressed_size < 29 || image_u32(data) != 0xcafefafa ||
++      image_u64(data + 4) != entry->compressed_size - 29 ||
++      image_u64(data + 12) != entry->claimed_uncompressed_size || (u8)data[28] != 1)
++    return CORRUPT;
++  const char *plugin = image_string(image, image_u32(data + 20));
++  if (!plugin || strcmp(plugin, "zip")) return CORRUPT;
++  uLongf output_size = entry->claimed_uncompressed_size;
++  *bytes = malloc(output_size ? output_size : 1);
++  int result = uncompress(*bytes, &output_size, (const u8 *)data + 29, entry->compressed_size - 29);
++  if (result != Z_OK || output_size != entry->claimed_uncompressed_size) {
++    free(*bytes); *bytes = nullptr; return CORRUPT;
++  }
++  *len = output_size;
++  return FOUND;
++}
++
+ // Returns true if found
+ enum jar_lookup_result jar_lookup(mapped_jar *jar, slice filename, u8 **bytes, size_t *len) {
++  if (jar->is_jimage) return jimage_lookup(jar, filename, bytes, len);
+   jar_entry *jar_entry = hash_table_lookup(&jar->entries, filename.chars, filename.len);
+   if (jar_entry) {
+     // Check header at jar_entry->header
+@@ -376,4 +482,4 @@ int lookup_classpath(classpath *cp, const slice filename, u8 **bytes, size_t *le
+     return 0;
+   }
+   return -1;
+-}
+\ No newline at end of file
++}
+diff --git a/vm/classpath.h b/vm/classpath.h
+index cfa67f6..e6b51a8 100644
+--- a/vm/classpath.h
++++ b/vm/classpath.h
+@@ -30,6 +30,9 @@ typedef struct {
+   u32 size_bytes;
+   bool is_mmap;    // true = mmap, false = heap allocation or WASMFS map
+   bool needs_free; // false = WASMFS map
++  bool is_jimage;
++  const char *image_strings;
++  u32 image_strings_size;
+ } mapped_jar;
+ 
+ typedef struct {
 diff --git a/vm/interpreter2.c b/vm/interpreter2.c
 index a812b4d..c8f04a1 100644
 --- a/vm/interpreter2.c
@@ -1698,319 +2307,3 @@ index 23f1e4d..156d254 100644
 -}
 \ No newline at end of file
 +}
-diff --git a/natives/share/java/util/zip/Deflater.c b/natives/share/java/util/zip/Deflater.c
-new file mode 100644
-index 0000000..4000e02
---- /dev/null
-+++ b/natives/share/java/util/zip/Deflater.c
-@@ -0,0 +1,93 @@
-+// Suwayomi browser port: JDK Deflater natives backed by Emscripten's zlib.
-+// Same MIT license as b-jvm. JDK's packed result encodes read/written counts.
-+#include <natives-dsl.h>
-+#include <zlib.h>
-+
-+DECLARE_NATIVE("java/util/zip", Deflater, init, "(IIZ)J") {
-+  z_stream *stream = calloc(1, sizeof(*stream));
-+  if (!stream) {
-+    raise_vm_exception_no_msg(thread, STR("java/lang/OutOfMemoryError"));
-+    return value_null();
-+  }
-+  int status = deflateInit2(stream, args[0].i, Z_DEFLATED, args[2].i ? -MAX_WBITS : MAX_WBITS, 8, args[1].i);
-+  if (status != Z_OK) {
-+    free(stream);
-+    raise_vm_exception_no_msg(thread, STR("java/lang/IllegalArgumentException"));
-+    return value_null();
-+  }
-+  arrput(thread->vm->deflater_streams, stream);
-+  return (stack_value){.l = (intptr_t)stream};
-+}
-+
-+static stack_value compress_bytes(vm_thread *thread, z_stream *stream, u8 *input, int input_size,
-+                                  u8 *output, int output_size, int flush, int params) {
-+  stream->next_in = input;
-+  stream->avail_in = input_size;
-+  stream->next_out = output;
-+  stream->avail_out = output_size;
-+  int changing = params & 1;
-+  int status = changing ? deflateParams(stream, params >> 3, (params >> 1) & 3) : deflate(stream, flush);
-+  if (status != Z_OK && status != Z_STREAM_END && status != Z_BUF_ERROR) {
-+    raise_vm_exception_no_msg(thread, STR("java/lang/InternalError"));
-+    return value_null();
-+  }
-+  u64 read = input_size - stream->avail_in;
-+  u64 written = output_size - stream->avail_out;
-+  u64 completed = status == Z_STREAM_END;
-+  u64 retry = changing && status != Z_OK;
-+  return (stack_value){.l = (s64)(read | (written << 31) | (completed << 62) | (retry << 63))};
-+}
-+
-+DECLARE_NATIVE("java/util/zip", Deflater, deflateBytesBytes, "(J[BII[BIIII)J") {
-+  return compress_bytes(thread, (z_stream *)(intptr_t)args[0].l,
-+    (u8 *)ArrayData(args[1].handle->obj) + args[2].i, args[3].i,
-+    (u8 *)ArrayData(args[4].handle->obj) + args[5].i, args[6].i, args[7].i, args[8].i);
-+}
-+
-+DECLARE_NATIVE("java/util/zip", Deflater, deflateBytesBuffer, "(J[BIIJIII)J") {
-+  return compress_bytes(thread, (z_stream *)(intptr_t)args[0].l,
-+    (u8 *)ArrayData(args[1].handle->obj) + args[2].i, args[3].i,
-+    (u8 *)(intptr_t)args[4].l, args[5].i, args[6].i, args[7].i);
-+}
-+
-+DECLARE_NATIVE("java/util/zip", Deflater, deflateBufferBytes, "(JJI[BIIII)J") {
-+  return compress_bytes(thread, (z_stream *)(intptr_t)args[0].l,
-+    (u8 *)(intptr_t)args[1].l, args[2].i,
-+    (u8 *)ArrayData(args[3].handle->obj) + args[4].i, args[5].i, args[6].i, args[7].i);
-+}
-+
-+DECLARE_NATIVE("java/util/zip", Deflater, deflateBufferBuffer, "(JJIJIII)J") {
-+  return compress_bytes(thread, (z_stream *)(intptr_t)args[0].l,
-+    (u8 *)(intptr_t)args[1].l, args[2].i, (u8 *)(intptr_t)args[3].l, args[4].i, args[5].i, args[6].i);
-+}
-+
-+DECLARE_NATIVE("java/util/zip", Deflater, setDictionary, "(J[BII)V") {
-+  int status = deflateSetDictionary((z_stream *)(intptr_t)args[0].l, (u8 *)ArrayData(args[1].handle->obj) + args[2].i, args[3].i);
-+  if (status != Z_OK) raise_vm_exception_no_msg(thread, STR("java/lang/IllegalArgumentException"));
-+  return value_null();
-+}
-+
-+DECLARE_NATIVE("java/util/zip", Deflater, setDictionaryBuffer, "(JJI)V") {
-+  int status = deflateSetDictionary((z_stream *)(intptr_t)args[0].l, (u8 *)(intptr_t)args[1].l, args[2].i);
-+  if (status != Z_OK) raise_vm_exception_no_msg(thread, STR("java/lang/IllegalArgumentException"));
-+  return value_null();
-+}
-+
-+DECLARE_NATIVE("java/util/zip", Deflater, getAdler, "(J)I") {
-+  return (stack_value){.i = ((z_stream *)(intptr_t)args[0].l)->adler};
-+}
-+
-+DECLARE_NATIVE("java/util/zip", Deflater, reset, "(J)V") {
-+  deflateReset((z_stream *)(intptr_t)args[0].l);
-+  return value_null();
-+}
-+
-+DECLARE_NATIVE("java/util/zip", Deflater, end, "(J)V") {
-+  z_stream *stream = (z_stream *)(intptr_t)args[0].l;
-+  deflateEnd(stream);
-+  for (int i = 0; i < arrlen(thread->vm->deflater_streams); ++i) {
-+    if (thread->vm->deflater_streams[i] == stream) { arrdelswap(thread->vm->deflater_streams, i); break; }
-+  }
-+  free(stream);
-+  return value_null();
-+}
-diff --git a/natives/share/sun/nio/ch/UnixFileDispatcherImpl.c b/natives/share/sun/nio/ch/UnixFileDispatcherImpl.c
-new file mode 100644
-index 0000000..9557c2a
---- /dev/null
-+++ b/natives/share/sun/nio/ch/UnixFileDispatcherImpl.c
-@@ -0,0 +1,53 @@
-+#include <natives-dsl.h>
-+#include <errno.h>
-+#include <stdint.h>
-+#include <unistd.h>
-+#include <sys/stat.h>
-+#include "../../../java/io/descriptor-access.h"
-+
-+// FileChannel addresses point into the VM's native (WASM linear) memory.
-+static s64 io_result(vm_thread *thread, ssize_t count, bool reading, int requested) {
-+  if (count >= 0) return reading && count == 0 && requested != 0 ? -1 : count;
-+  if (errno == EAGAIN) return -2;
-+  if (errno == EINTR) return -3;
-+  raise_vm_exception(thread, STR("java/io/IOException"), STR("Browser filesystem I/O failed"));
-+  return -1;
-+}
-+
-+DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, read0, "(Ljava/io/FileDescriptor;JI)I") {
-+  int fd = LoadFieldInt(args[0].handle->obj, "fd");
-+  ssize_t count = jvm_descriptor_access(fd, false) ? read(fd, (void *)(uintptr_t)args[1].l, args[2].i) : -1;
-+  return (stack_value){.i = io_result(thread, count, true, args[2].i)};
-+}
-+DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, pread0, "(Ljava/io/FileDescriptor;JIJ)I") {
-+  int fd = LoadFieldInt(args[0].handle->obj, "fd");
-+  ssize_t count = jvm_descriptor_access(fd, false) ? pread(fd, (void *)(uintptr_t)args[1].l, args[2].i, args[3].l) : -1;
-+  return (stack_value){.i = io_result(thread, count, true, args[2].i)};
-+}
-+DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, write0, "(Ljava/io/FileDescriptor;JI)I") {
-+  int fd = LoadFieldInt(args[0].handle->obj, "fd");
-+  ssize_t count = jvm_descriptor_access(fd, true) ? write(fd, (const void *)(uintptr_t)args[1].l, args[2].i) : -1;
-+  return (stack_value){.i = io_result(thread, count, false, args[2].i)};
-+}
-+DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, pwrite0, "(Ljava/io/FileDescriptor;JIJ)I") {
-+  int fd = LoadFieldInt(args[0].handle->obj, "fd");
-+  ssize_t count = jvm_descriptor_access(fd, true) ? pwrite(fd, (const void *)(uintptr_t)args[1].l, args[2].i, args[3].l) : -1;
-+  return (stack_value){.i = io_result(thread, count, false, args[2].i)};
-+}
-+DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, seek0, "(Ljava/io/FileDescriptor;J)J") {
-+  int fd = LoadFieldInt(args[0].handle->obj, "fd");
-+  off_t position = lseek(fd, args[1].l < 0 ? 0 : args[1].l, args[1].l < 0 ? SEEK_CUR : SEEK_SET);
-+  if (position < 0) raise_vm_exception(thread, STR("java/io/IOException"), STR("Could not seek browser file"));
-+  return (stack_value){.l = position};
-+}
-+DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, truncate0, "(Ljava/io/FileDescriptor;J)I") {
-+  int fd = LoadFieldInt(args[0].handle->obj, "fd");
-+  return (stack_value){.i = io_result(thread, jvm_descriptor_access(fd, true) ? ftruncate(fd, args[1].l) : -1, false, 0)};
-+}
-+DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, force0, "(Ljava/io/FileDescriptor;Z)I") {
-+  return (stack_value){.i = io_result(thread, fsync(LoadFieldInt(args[0].handle->obj, "fd")), false, 0)};
-+}
-+DECLARE_NATIVE("sun/nio/ch", UnixFileDispatcherImpl, closeIntFD, "(I)V") {
-+  if (close(args[0].i) != 0) raise_vm_exception(thread, STR("java/io/IOException"), STR("Could not close browser file"));
-+  return value_null();
-+}
-diff --git a/natives/share/java/io/descriptor-access.h b/natives/share/java/io/descriptor-access.h
-new file mode 100644
-index 0000000..5745d7c
---- /dev/null
-+++ b/natives/share/java/io/descriptor-access.h
-@@ -0,0 +1,16 @@
-+#ifndef BJVM_DESCRIPTOR_ACCESS_H
-+#define BJVM_DESCRIPTOR_ACCESS_H
-+#include <errno.h>
-+#include <fcntl.h>
-+
-+// WasmFS does not consistently reject operations through descriptors opened
-+// in the opposite access mode. Check at the Java I/O boundary, not file mode
-+// bits: chmod does not change the access rights of an already-open descriptor.
-+static inline bool jvm_descriptor_access(int fd, bool writing) {
-+  int flags = fcntl(fd, F_GETFL);
-+  if (flags < 0) return false;
-+  int access = flags & O_ACCMODE;
-+  if (writing ? access == O_RDONLY : access == O_WRONLY) { errno = EBADF; return false; }
-+  return true;
-+}
-+#endif
-diff --git a/natives/share/com/squareup/zstd/Zstd.c b/natives/share/com/squareup/zstd/Zstd.c
-new file mode 100644
-index 0000000..e5ba6d4
---- /dev/null
-+++ b/natives/share/com/squareup/zstd/Zstd.c
-@@ -0,0 +1,117 @@
-+/* Browser native adaptation of Square okio-zstd's ZstdKmp.cpp.
-+ * Copyright (C) 2025 Square, Inc.
-+ * Licensed under the Apache License, Version 2.0 (the "License");
-+ * you may not use this file except in compliance with the License.
-+ * You may obtain a copy of the License at
-+ * https://www.apache.org/licenses/LICENSE-2.0
-+ * Unless required by applicable law or agreed to in writing, software
-+ * distributed under the License is distributed on an "AS IS" BASIS,
-+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-+ * See the License for the specific language governing permissions and
-+ * limitations under the License.
-+ * https://github.com/square/okio-zstd/tree/4fbdf35df030888d2a0cce4a84329d107438134f
-+ * Uses the original Zstandard streaming codec, not a cache-format substitute.
-+ */
-+#include <natives-dsl.h>
-+#include <zstd.h>
-+
-+static bool owned(void **contexts, void *context) {
-+  for (int i = 0; i < arrlen(contexts); i++) if (contexts[i] == context) return true;
-+  return false;
-+}
-+
-+static bool bounds(vm_thread *thread, object array, s32 start, s32 end) {
-+  if (!array || start < 0 || end < start || end > ArrayLength(array)) {
-+    raise_vm_exception_no_msg(thread, STR("java/lang/IndexOutOfBoundsException"));
-+    return false;
-+  }
-+  return true;
-+}
-+
-+static stack_value code(size_t result) {
-+  return (stack_value){.l = ZSTD_isError(result) ? (s64)(s32)result : (s64)result};
-+}
-+
-+DECLARE_NATIVE("com/squareup/zstd", JniZstdKt, createJniZstd, "()J") {
-+  // Original JNI caches four Java field IDs. This VM resolves them by name,
-+  // so its equivalent metadata token is immutable and requires no allocation.
-+  return (stack_value){.l = 1};
-+}
-+
-+DECLARE_NATIVE("com/squareup/zstd", JniZstdKt, jniGetErrorName, "(J)Ljava/lang/String;") {
-+  size_t result = (size_t)args[0].l;
-+  return (stack_value){.obj = ZSTD_isError(result) ? MakeJStringFromUTF8(thread, ZSTD_getErrorName(result)) : nullptr};
-+}
-+
-+DECLARE_NATIVE("com/squareup/zstd", JniZstdKt, createZstdCompressor, "()J") {
-+  void *context = ZSTD_createCCtx();
-+  if (context) arrput(thread->vm->zstd_compressors, context);
-+  return (stack_value){.l = (s64)(uintptr_t)context};
-+}
-+
-+DECLARE_NATIVE("com/squareup/zstd", JniZstdKt, createZstdDecompressor, "()J") {
-+  void *context = ZSTD_createDCtx();
-+  if (context) arrput(thread->vm->zstd_decompressors, context);
-+  return (stack_value){.l = (s64)(uintptr_t)context};
-+}
-+
-+DECLARE_NATIVE("com/squareup/zstd", JniZstdCompressor, setParameter, "(JII)J") {
-+  void *context = (void *)(uintptr_t)args[0].l;
-+  if (!owned(thread->vm->zstd_compressors, context)) {
-+    raise_vm_exception_no_msg(thread, STR("java/lang/IllegalStateException"));
-+    return value_null();
-+  }
-+  return code(ZSTD_CCtx_setParameter(context, args[1].i, args[2].i));
-+}
-+
-+DECLARE_NATIVE("com/squareup/zstd", JniZstdCompressor, compressStream2, "(JJ[BII[BIII)J") {
-+  void *context = (void *)(uintptr_t)args[1].l;
-+  if (args[0].l != 1 || !owned(thread->vm->zstd_compressors, context)) {
-+    raise_vm_exception_no_msg(thread, STR("java/lang/IllegalStateException"));
-+    return value_null();
-+  }
-+  object output = args[2].handle->obj, input = args[5].handle->obj;
-+  if (args[8].i < ZSTD_e_continue || args[8].i > ZSTD_e_end) {
-+    raise_vm_exception_no_msg(thread, STR("java/lang/IllegalArgumentException"));
-+    return value_null();
-+  }
-+  if (!bounds(thread, output, args[4].i, args[3].i) || !bounds(thread, input, args[7].i, args[6].i)) return value_null();
-+  ZSTD_inBuffer source = {ArrayData(input), args[6].i, args[7].i};
-+  ZSTD_outBuffer target = {ArrayData(output), args[3].i, args[4].i};
-+  size_t result = ZSTD_compressStream2(context, &target, &source, args[8].i);
-+  StoreFieldInt(obj->obj, "outputBytesProcessed", (s32)target.pos - args[4].i);
-+  StoreFieldInt(obj->obj, "inputBytesProcessed", (s32)source.pos - args[7].i);
-+  return code(result);
-+}
-+
-+DECLARE_NATIVE("com/squareup/zstd", JniZstdDecompressor, decompressStream, "(JJ[BII[BII)J") {
-+  void *context = (void *)(uintptr_t)args[1].l;
-+  if (args[0].l != 1 || !owned(thread->vm->zstd_decompressors, context)) {
-+    raise_vm_exception_no_msg(thread, STR("java/lang/IllegalStateException"));
-+    return value_null();
-+  }
-+  object output = args[2].handle->obj, input = args[5].handle->obj;
-+  if (!bounds(thread, output, args[4].i, args[3].i) || !bounds(thread, input, args[7].i, args[6].i)) return value_null();
-+  ZSTD_inBuffer source = {ArrayData(input), args[6].i, args[7].i};
-+  ZSTD_outBuffer target = {ArrayData(output), args[3].i, args[4].i};
-+  size_t result = ZSTD_decompressStream(context, &target, &source);
-+  StoreFieldInt(obj->obj, "outputBytesProcessed", (s32)target.pos - args[4].i);
-+  StoreFieldInt(obj->obj, "inputBytesProcessed", (s32)source.pos - args[7].i);
-+  return code(result);
-+}
-+
-+DECLARE_NATIVE("com/squareup/zstd", JniZstdCompressor, close, "(J)V") {
-+  void *context = (void *)(uintptr_t)args[0].l;
-+  for (int i = 0; i < arrlen(thread->vm->zstd_compressors); i++) if (thread->vm->zstd_compressors[i] == context) {
-+    ZSTD_freeCCtx(context); arrdelswap(thread->vm->zstd_compressors, i); break;
-+  }
-+  return value_null();
-+}
-+
-+DECLARE_NATIVE("com/squareup/zstd", JniZstdDecompressor, close, "(J)V") {
-+  void *context = (void *)(uintptr_t)args[0].l;
-+  for (int i = 0; i < arrlen(thread->vm->zstd_decompressors); i++) if (thread->vm->zstd_decompressors[i] == context) {
-+    ZSTD_freeDCtx(context); arrdelswap(thread->vm->zstd_decompressors, i); break;
-+  }
-+  return value_null();
-+}
-diff --git a/natives/share/jdk/internal/util/SystemProps.c b/natives/share/jdk/internal/util/SystemProps.c
-index bad861c..b98f808 100644
---- a/natives/share/jdk/internal/util/SystemProps.c
-+++ b/natives/share/jdk/internal/util/SystemProps.c
-@@ -110,7 +110,7 @@ DECLARE_NATIVE("jdk/internal/util", SystemProps_Raw, platformProperties, "()[Lja
-   SET_PROP(_socksProxyPort_NDX, "");
-   SET_PROP(_user_dir_NDX, cwd.chars);
-   SET_PROP(_user_name_NDX, "user");
--  SET_PROP(_user_home_NDX, "/home/user");
-+  SET_PROP(_user_home_NDX, "/user");
- 
-   stack_value result = (stack_value){.obj = props->obj};
-   drop_handle(thread, props);

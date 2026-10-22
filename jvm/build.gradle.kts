@@ -78,8 +78,19 @@ val unpatchedBrowserJar by tasks.registering(Jar::class) {
     duplicatesStrategy = DuplicatesStrategy.EXCLUDE
     from(sourceSets.main.get().output)
     from(layout.buildDirectory.dir("locale-provider-classes"))
-    from(configurations.runtimeClasspath.get().map { if (it.isDirectory) it else zipTree(it) })
-    exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA", "module-info.class")
+    for (artifact in configurations.runtimeClasspath.get().resolvedConfiguration.resolvedArtifacts) {
+        from(if (artifact.file.isDirectory) artifact.file else zipTree(artifact.file)) {
+            includeEmptyDirs = false
+            // The framework JAR supplies compile-time API classes. Its Android
+            // resource table, APK assets and native libraries cannot be loaded
+            // by the browser resource facade or the WebAssembly JVM.
+            if (artifact.moduleVersion.id.group == "com.github.Suwayomi" && artifact.name == "android-jar")
+                include("**/*.class", "META-INF/**")
+        }
+    }
+    // Desktop Zstd JNI payloads also cannot execute in WASM: PatchOkHttp skips
+    // their loader, while the real codec is compiled into b-jvm itself.
+    exclude("META-INF/*.SF", "META-INF/*.RSA", "META-INF/*.DSA", "module-info.class", "jni/**")
 }
 val compileBrowserLocaleProvider by tasks.registering(JavaCompile::class) {
     val sources = file("src/locale-provider/java")

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Suwayomi Browser",
-  "version": "0.3.5",
+  "version": "0.3.6",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzD5pyKKK8PT0viSyY0RxrRg04mlL9wAGYiKb2LQIS2cY4TS3fU4Vqe+91iGUUehd1lqT3TxmPitHKBsIwEzvDANqOwZiXXv7RRciPA2c+MVu0js7X7XzNqF7eRUCLUDu2V7eP1wfaCsK0aeGdAYdGTrR13+aprgQ3iVgbTRAquxAZ7ugTmAQ1zPhI+YgumQm9Xm6EVkdX3qCrisW/xEjxOpoQBSuMefWQtne3/5kNftKSgxImxf0j8BnI2hUZw4w3YzswgE8xDkZDzhBGrBGVAQVS/Y2Q+NLcvP0g4bZHJOYHhkXjs1JwgUKuy921YduoIOuHjnANFUd9oxVflMKPQIDAQAB",
   "description": "Run a local manga library and JVM source extensions inside the browser.",
   "action": { "default_title": "Open Suwayomi Browser" },

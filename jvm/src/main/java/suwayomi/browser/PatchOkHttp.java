@@ -9,11 +9,13 @@ public final class PatchOkHttp {
     public static void main(String[] args) throws Exception {
         // Fixed, time-zone independent entry timestamp (args[2] = SOURCE_DATE_EPOCH) keeps the output byte-reproducible.
         LocalDateTime stamp = LocalDateTime.ofEpochSecond(Math.max(Long.parseLong(args[2]), 315532800L), 0, ZoneOffset.UTC);
+        IcuSubset icu = new IcuSubset(Path.of(args[0]));
         try (ZipInputStream input = new ZipInputStream(Files.newInputStream(Path.of(args[0])));
              ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(Path.of(args[1])))) {
             ZipEntry entry;
             while ((entry = input.getNextEntry()) != null) {
                 byte[] bytes = input.readAllBytes();
+                if (!icu.keep(entry.getName())) continue;
                 if (entry.getName().equals("okhttp3/OkHttpClient.class")) {
                     ClassReader reader = new ClassReader(bytes);
                     ClassWriter writer = new ClassWriter(ClassWriter.COMPUTE_MAXS);
@@ -84,5 +86,6 @@ public final class PatchOkHttp {
                 output.closeEntry();
             }
         }
+        icu.report();
     }
 }

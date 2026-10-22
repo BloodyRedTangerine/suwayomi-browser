@@ -8,7 +8,7 @@ screenshots (`AMO/screenshots/` are generated from the built-in synthetic librar
 | Name | **Suwayomi Browser (unofficial)** |
 | Add-on ID (permanent) | `suwayomi-browser@bloodyredtangerine` |
 | Summary (max 250 characters; this one is 206) | A local manga and comic library and reader that runs entirely in your browser: the Suwayomi web interface with a browser-local backend. No desktop server, no data collection, no sources bundled. Unofficial. |
-| Version | 0.3.5 |
+| Version | 0.3.6 |
 | Compatible with | Firefox (desktop) 154.0 or later and Firefox for Android 154.0 or later |
 | Listing visibility | Public (listed on addons.mozilla.org) |
 | Categories (choose up to two in the form) | Games & Entertainment; Other. Firefox for Android: Games & entertainment. Confirm the exact names offered by the Developer Hub. |

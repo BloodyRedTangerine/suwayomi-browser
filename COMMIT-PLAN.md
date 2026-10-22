@@ -56,7 +56,7 @@ npm ci && npm test        # optional: the reduced synthetic suite
 ## Commit message
 
 ```text
-Suwayomi Browser (unofficial) 0.3.5: first public source release
+Suwayomi Browser (unofficial) 0.3.6: first public source release
 
 Local-first manga library for Firefox (desktop + Android) and Chrome/Edge:
 the Suwayomi WebUI running against a browser-local backend, with Mihon/
@@ -79,7 +79,7 @@ git config --local commit.gpgsign false      # or set up a signing key for this 
 git add -A
 git status --short | head -50                # review once
 git commit -F - <<'MSG'
-Suwayomi Browser (unofficial) 0.3.5: first public source release
+Suwayomi Browser (unofficial) 0.3.6: first public source release
 
 Local-first manga library for Firefox (desktop + Android) and Chrome/Edge:
 the Suwayomi WebUI running against a browser-local backend, with Mihon/
@@ -90,8 +90,8 @@ MSG
 git log -1 --format='%an <%ae>'              # confirm the identity
 git remote add origin git@github-brt:BloodyRedTangerine/suwayomi-browser.git
 git push -u origin main
-git tag -a v0.3.5 -m 'Suwayomi Browser (unofficial) 0.3.5'
-git push origin v0.3.5
+git tag -a v0.3.6 -m 'Suwayomi Browser (unofficial) 0.3.6'
+git push origin v0.3.6
 ```
 
 `github-brt` is your SSH host alias (`~/.ssh/config`: `Host github-brt`, `HostName github.com`, `User git`, `IdentityFile <key for BloodyRedTangerine>`).
